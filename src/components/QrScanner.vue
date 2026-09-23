@@ -1,11 +1,11 @@
 <template>
-  <div v-if="permissionState === 'denied'" class="scanner-permission">
+  <div v-if="permissionState !== 'granted'" class="scanner-permission">
     <h1 class="screen-title">Ler NFC-e</h1>
     <p class="screen-copy">
-      Permita o acesso à câmera nas configurações do navegador para ler o QR Code da nota.
+      {{ cameraMessage }}
     </p>
     <button class="btn-primary" @click="requestCamera">
-      <span class="btn-primary-text">Tentar novamente</span>
+      <span class="btn-primary-text">Ativar câmera</span>
       <span class="btn-arrow">→</span>
     </button>
     <button class="btn-cancel" @click="$emit('cancel')">Voltar</button>
@@ -25,19 +25,26 @@
 
 <script setup>
 import jsQR from 'jsqr';
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { onBeforeUnmount, ref } from 'vue';
 
 const emit = defineEmits(['scan', 'cancel']);
 
 const videoEl = ref(null);
 const canvasEl = ref(null);
 const permissionState = ref('pending'); // pending | granted | denied
+const cameraMessage = ref('Toque no botão para permitir o acesso à câmera e ler o QR Code da nota.');
 
 let stream = null;
 let rafId = null;
 let scanned = false;
 
 async function requestCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    permissionState.value = 'denied';
+    cameraMessage.value = 'A câmera exige HTTPS. Abra o endereço publicado ou um link HTTPS do túnel no celular.';
+    return;
+  }
+
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: 'environment' } },
@@ -48,6 +55,7 @@ async function requestCamera() {
     tick();
   } catch (error) {
     permissionState.value = 'denied';
+    cameraMessage.value = 'Não foi possível acessar a câmera. Verifique a permissão deste site e tente novamente.';
   }
 }
 
@@ -71,8 +79,6 @@ function tick() {
   }
   rafId = requestAnimationFrame(tick);
 }
-
-onMounted(requestCamera);
 
 onBeforeUnmount(() => {
   if (rafId) cancelAnimationFrame(rafId);

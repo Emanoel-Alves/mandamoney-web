@@ -11,7 +11,7 @@
 
   <QrScanner v-else-if="screen === 'scanner'" @scan="readNf" @cancel="screen = 'home'" />
 
-  <OcrScanner v-else-if="screen === 'ocr'" @capture="readNfImage" @cancel="screen = 'home'" />
+  <OcrScanner v-else-if="screen === 'ocr'" @capture="readNfImage" @error="showMessage" @cancel="screen = 'home'" />
 
   <SplitScreen
     v-else-if="screen === 'split'"
@@ -19,8 +19,10 @@
     :items="draftItems"
     :disabled="isRequesting"
     @toggle="togglePerson"
+    @category="updateDraftCategory"
     @cancel="screen = 'home'"
     @save="saveDraft"
+    @add-item="addAnotherManualItem"
   />
 
   <ManualScreen
@@ -28,7 +30,8 @@
     v-model:product="product"
     v-model:value="value"
     v-model:market="market"
-    @back="screen = 'home'"
+    v-model:category="category"
+    @back="backFromManual"
     @add="addManualItem"
   />
 
@@ -41,17 +44,20 @@
     :balances="balances"
     :items="currentMonthItems"
     :disabled="isRequesting"
-    :unread-count="notifications.unreadCount.value"
+    :unread-count="notifications.unreadCount.value + paymentNotifications.length"
     :show-notifications="showNotifications"
     :notification-items="notificationItems"
     @pay="payBalance"
+    @confirm-payment="confirmPayment"
     @qr="startQrImport"
     @ocr="startOcrImport"
-    @manual="screen = 'manual'"
+    @manual="startManualItem"
     @month="screen = 'month'"
     @logout="logout"
     @open-notifications="openNotifications"
   />
+
+  <MessageModal v-if="modalMessage" :message="modalMessage" @close="modalMessage = ''" />
 </template>
 
 <script setup>
@@ -60,6 +66,7 @@ import HomeScreen from './components/HomeScreen.vue';
 import LoadingScreen from './components/LoadingScreen.vue';
 import LoginScreen from './components/LoginScreen.vue';
 import ManualScreen from './components/ManualScreen.vue';
+import MessageModal from './components/MessageModal.vue';
 import MonthScreen from './components/MonthScreen.vue';
 import OcrScanner from './components/OcrScanner.vue';
 import QrScanner from './components/QrScanner.vue';
@@ -67,10 +74,12 @@ import SplitScreen from './components/SplitScreen.vue';
 import {
   OCR_URL,
   calculateBalances,
+  classifyProduct,
   isCurrentMonth,
   mapApiBalance,
   mapApiItem,
   normalizePhone,
+  postApi,
   requestApi,
 } from './lib/api';
 import { useNotifications } from './lib/notifications';
@@ -85,6 +94,7 @@ const draftItems = ref([]);
 const product = ref('');
 const value = ref('');
 const market = ref('');
+const category = ref('');
 const isLoggingIn = ref(false);
 const isRequesting = ref(false);
 const loadingLabel = ref('Entrando na sua casa...');
@@ -92,19 +102,35 @@ const balances = ref([]);
 
 const showNotifications = ref(false);
 const notificationItems = ref([]);
+const paymentNotifications = ref([]);
+const modalMessage = ref('');
 const notifications = useNotifications();
 
 const currentMonthItems = computed(() => items.value.filter((item) => isCurrentMonth(item.date)));
 const total = computed(() => currentMonthItems.value.reduce((sum, item) => sum + item.value, 0));
+
+function showMessage(message) {
+  modalMessage.value = message;
+}
 
 function refreshNotifications() {
   notifications.refresh(loggedUser.value?.id, items.value);
 }
 
 function openNotifications() {
-  notificationItems.value = [...notifications.unreadItems.value];
+  notificationItems.value = [...notifications.unreadItems.value, ...paymentNotifications.value];
   showNotifications.value = true;
   notifications.markAllSeen(loggedUser.value.id, items.value);
+}
+
+async function refreshPaymentNotifications() {
+  if (!loggedUser.value) return;
+  try {
+    const data = await requestApi(`?action=paymentNotifications&userId=${encodeURIComponent(loggedUser.value.id)}`);
+    paymentNotifications.value = data.notifications || [];
+  } catch {
+    paymentNotifications.value = [];
+  }
 }
 
 async function login() {
@@ -132,11 +158,12 @@ async function login() {
       balances.value = calculateBalances(loadedItems);
     }
 
+    await refreshPaymentNotifications();
     refreshNotifications();
     screen.value = 'home';
   } catch (error) {
     screen.value = 'login';
-    alert(error instanceof Error ? error.message : 'Verifique sua conexão e os dados.');
+    showMessage(error instanceof Error ? error.message : 'Verifique sua conexão e os dados.');
   } finally {
     isLoggingIn.value = false;
     isRequesting.value = false;
@@ -159,11 +186,7 @@ async function readNf(qrCode) {
   loadingLabel.value = 'Lendo a NFC-e...';
   screen.value = 'loading';
   try {
-    const data = await requestApi('', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'readNf', qrCode }),
-    });
+    const data = await postApi({ action: 'readNf', qrCode });
     const parsedItems = (data.items || [])
       .map((item, index) => ({
         id: `nf-${Date.now()}-${index}`,
@@ -181,7 +204,7 @@ async function readNf(qrCode) {
     screen.value = 'split';
   } catch (error) {
     screen.value = 'home';
-    alert(error instanceof Error ? error.message : 'Confira o QR Code e tente novamente.');
+    showMessage(error instanceof Error ? error.message : 'Confira o QR Code e tente novamente.');
   } finally {
     isRequesting.value = false;
   }
@@ -219,7 +242,7 @@ async function readNfImage(imageBase64) {
     screen.value = 'split';
   } catch (error) {
     screen.value = 'home';
-    alert(error instanceof Error ? error.message : 'Confira a foto e tente novamente.');
+    showMessage(error instanceof Error ? error.message : 'Confira a foto e tente novamente.');
   } finally {
     isRequesting.value = false;
   }
@@ -238,31 +261,51 @@ function togglePerson(itemId, userId) {
   );
 }
 
+function updateDraftCategory(itemId, categoryName) {
+  draftItems.value = draftItems.value.map((item) =>
+    item.id === itemId ? { ...item, category: categoryName } : item,
+  );
+}
+
+function startManualItem() {
+  draftItems.value = [];
+  category.value = '';
+  screen.value = 'manual';
+}
+
+function addAnotherManualItem() {
+  product.value = '';
+  value.value = '';
+  market.value = '';
+  category.value = '';
+  screen.value = 'manual';
+}
+
+function backFromManual() {
+  screen.value = draftItems.value.length ? 'split' : 'home';
+}
+
 async function saveDraft() {
   if (isRequesting.value) return;
   if (draftItems.value.some((item) => item.sharedWith.length === 0)) {
-    alert('Cada item precisa ter pelo menos uma pessoa.');
+    showMessage('Cada item precisa ter pelo menos uma pessoa.');
     return;
   }
   isRequesting.value = true;
   loadingLabel.value = 'Salvando divisão...';
   screen.value = 'loading';
   try {
-    await requestApi('', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'saveItems', items: draftItems.value }),
-    });
+    await postApi({ action: 'saveItems', items: draftItems.value });
     const nextItems = [...draftItems.value, ...items.value];
     items.value = nextItems;
     balances.value = calculateBalances(nextItems);
     draftItems.value = [];
     screen.value = 'home';
     refreshNotifications();
-    alert('Compra salva! Os itens foram enviados para a planilha.');
+    showMessage('Compra salva! Os itens foram enviados para a planilha.');
   } catch (error) {
     screen.value = 'split';
-    alert(error instanceof Error ? error.message : 'Verifique a conexão com a planilha.');
+    showMessage(error instanceof Error ? error.message : 'Verifique a conexão com a planilha.');
   } finally {
     isRequesting.value = false;
   }
@@ -274,24 +317,48 @@ async function payBalance(balance) {
   loadingLabel.value = 'Atualizando saldo...';
   screen.value = 'loading';
   try {
-    await requestApi('', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'payDebt',
-        balanceId: balance.id,
-        debtorId: balance.debtorId,
-        creditorId: balance.creditorId,
-      }),
+    await postApi({
+      action: 'requestPayment',
+      balanceId: balance.id,
+      debtorId: balance.debtorId,
+      creditorId: balance.creditorId,
+      value: balance.value,
     });
     balances.value = balances.value.map((item) =>
-      item.id === balance.id ? { ...item, status: 'Pago', paidAt: new Date().toISOString() } : item,
+      item.id === balance.id ? { ...item, status: 'Aguardando confirmação' } : item,
     );
     screen.value = 'home';
-    alert('Dívida quitada! Compras futuras criarão um novo saldo.');
+    await refreshPaymentNotifications();
+    showMessage('Pagamento informado. A outra pessoa precisa confirmar para quitar o saldo.');
   } catch (error) {
     screen.value = 'home';
-    alert(error instanceof Error ? error.message : 'Adicione a ação payDebt no Apps Script.');
+    showMessage(error instanceof Error ? error.message : 'Não foi possível informar o pagamento.');
+  } finally {
+    isRequesting.value = false;
+  }
+}
+
+async function confirmPayment(notification) {
+  if (isRequesting.value) return;
+  isRequesting.value = true;
+  loadingLabel.value = 'Confirmando pagamento...';
+  try {
+    await postApi({
+      action: 'confirmPayment',
+      notificationId: notification.id,
+      balanceId: notification.balanceId,
+      creditorId: loggedUser.value.id,
+    });
+    balances.value = balances.value.map((item) =>
+      item.id === notification.balanceId
+        ? { ...item, status: 'Pago', paidAt: new Date().toISOString() }
+        : item,
+    );
+    paymentNotifications.value = paymentNotifications.value.filter((item) => item.id !== notification.id);
+    notificationItems.value = notificationItems.value.filter((item) => item.id !== notification.id);
+    showMessage('Pagamento confirmado. A dívida foi quitada.');
+  } catch (error) {
+    showMessage(error instanceof Error ? error.message : 'Não foi possível confirmar o pagamento.');
   } finally {
     isRequesting.value = false;
   }
@@ -300,13 +367,15 @@ async function payBalance(balance) {
 function addManualItem() {
   const parsedValue = Number(value.value.replace(',', '.'));
   if (!product.value.trim() || !parsedValue || !loggedUser.value) {
-    alert('Informe o produto e um valor maior que zero.');
+    showMessage('Informe o produto e um valor maior que zero.');
     return;
   }
   draftItems.value = [
+    ...draftItems.value,
     {
-      id: `manual-${Date.now()}`,
+      id: `manual-${Date.now()}-${draftItems.value.length}`,
       product: product.value.trim(),
+      category: category.value || classifyProduct(product.value),
       value: parsedValue,
       market: market.value.trim() || 'Compra manual',
       date: '22/09/2026',
@@ -317,6 +386,7 @@ function addManualItem() {
   product.value = '';
   value.value = '';
   market.value = '';
+  category.value = '';
   screen.value = 'split';
 }
 

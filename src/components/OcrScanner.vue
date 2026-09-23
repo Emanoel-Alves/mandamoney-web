@@ -1,11 +1,11 @@
 <template>
-  <div v-if="permissionState === 'denied'" class="scanner-permission">
+  <div v-if="permissionState !== 'granted'" class="scanner-permission">
     <h1 class="screen-title">Fotografar nota</h1>
     <p class="screen-copy">
-      Permita o acesso à câmera nas configurações do navegador para reconhecer os produtos da nota.
+      {{ cameraMessage }}
     </p>
     <button class="btn-primary" @click="requestCamera">
-      <span class="btn-primary-text">Tentar novamente</span>
+      <span class="btn-primary-text">Ativar câmera</span>
       <span class="btn-arrow">→</span>
     </button>
     <button class="btn-cancel" @click="$emit('cancel')">Voltar</button>
@@ -28,18 +28,25 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { onBeforeUnmount, ref } from 'vue';
 
-const emit = defineEmits(['capture', 'cancel']);
+const emit = defineEmits(['capture', 'cancel', 'error']);
 
 const videoEl = ref(null);
 const canvasEl = ref(null);
 const permissionState = ref('pending');
+const cameraMessage = ref('Toque no botão para permitir o acesso à câmera e fotografar a nota.');
 const capturing = ref(false);
 
 let stream = null;
 
 async function requestCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    permissionState.value = 'denied';
+    cameraMessage.value = 'A câmera exige HTTPS. Abra o endereço publicado ou um link HTTPS do túnel no celular.';
+    return;
+  }
+
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: 'environment' } },
@@ -49,6 +56,7 @@ async function requestCamera() {
     await videoEl.value.play();
   } catch (error) {
     permissionState.value = 'denied';
+    cameraMessage.value = 'Não foi possível acessar a câmera. Verifique a permissão deste site e tente novamente.';
   }
 }
 
@@ -69,11 +77,9 @@ function capture() {
     emit('capture', base64);
   } catch (error) {
     capturing.value = false;
-    alert('Não foi possível preparar a foto. Tente novamente.');
+    emit('error', 'Não foi possível preparar a foto. Tente novamente.');
   }
 }
-
-onMounted(requestCamera);
 
 onBeforeUnmount(() => {
   if (stream) stream.getTracks().forEach((track) => track.stop());

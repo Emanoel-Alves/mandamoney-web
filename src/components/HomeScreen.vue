@@ -18,15 +18,32 @@
       <div v-if="showNotifications" class="notifications-panel">
         <h3>Notificações</h3>
         <p v-if="notificationItems.length === 0">Nenhuma novidade por aqui.</p>
-        <p v-for="item in notificationItems" :key="item.id">
-          Você foi incluído em <strong>{{ item.product }}</strong>
-        </p>
+        <div v-for="item in notificationItems" :key="item.id" class="notification-item">
+          <template v-if="item.type === 'payment_request'">
+            <p>
+              <strong>{{ nameOf(item.debtorId) }}</strong> informou o pagamento de
+              <strong>{{ money(item.value) }}</strong>.
+            </p>
+            <button class="confirm-payment-btn" :disabled="disabled" @click="$emit('confirm-payment', item)">
+              Confirmar pagamento
+            </button>
+          </template>
+          <p v-else>Você foi incluído em <strong>{{ item.product }}</strong></p>
+        </div>
       </div>
 
       <div class="summary">
         <div>
           <p class="summary-label">TOTAL DA CASA</p>
-          <p class="summary-value">{{ money(total) }}</p>
+          <p
+            class="summary-value"
+            :class="{
+              'summary-value-long': totalDisplay.length > 12,
+              'summary-value-extra-long': totalDisplay.length > 16,
+            }"
+          >
+            {{ totalDisplay }}
+          </p>
           <p class="summary-caption">em setembro</p>
         </div>
         <div class="summary-month">
@@ -83,10 +100,13 @@
                 <p v-if="isPaid(balance)" class="debt-paid-note">
                   Pago{{ balance.paidAt ? ` em ${formatPaidDate(balance.paidAt)}` : '' }}
                 </p>
+                <p v-else-if="isAwaitingConfirmation(balance)" class="debt-paid-note">
+                  Aguardando confirmação de {{ nameOf(balance.creditorId) }}
+                </p>
               </div>
             </div>
             <p class="debt-value">{{ money(balance.value) }}</p>
-            <button v-if="!isPaid(balance)" class="pay-btn" :disabled="disabled" @click="$emit('pay', balance)">
+            <button v-if="!isPaid(balance) && !isAwaitingConfirmation(balance)" class="pay-btn" :disabled="disabled" @click="$emit('pay', balance)">
               Quitar
             </button>
           </div>
@@ -108,10 +128,11 @@
 </template>
 
 <script setup>
+import { computed } from 'vue';
 import { money, formatPaidDate } from '../lib/api';
 import { users } from '../lib/users';
 
-defineProps({
+const props = defineProps({
   user: { type: Object, required: true },
   total: { type: Number, required: true },
   balances: { type: Array, default: () => [] },
@@ -122,8 +143,9 @@ defineProps({
   notificationItems: { type: Array, default: () => [] },
 });
 
-defineEmits(['pay', 'qr', 'ocr', 'manual', 'month', 'logout', 'open-notifications']);
+defineEmits(['pay', 'confirm-payment', 'qr', 'ocr', 'manual', 'month', 'logout', 'open-notifications']);
 
+const totalDisplay = computed(() => money(props.total));
 const todayLabel = 'TERÇA, 22 SET 2026';
 
 function nameOf(userId) {
@@ -132,5 +154,9 @@ function nameOf(userId) {
 
 function isPaid(balance) {
   return balance.status.toLowerCase() === 'pago';
+}
+
+function isAwaitingConfirmation(balance) {
+  return balance.status.toLowerCase().includes('aguardando');
 }
 </script>

@@ -80,6 +80,25 @@ input {
 
 .btn-primary[disabled] { opacity: 0.7; }
 
+.add-item-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: var(--dark);
+  font-size: 14px;
+  font-weight: 800;
+  background: var(--white);
+}
+
+.add-item-button[disabled] { opacity: 0.55; }
+.add-item-icon { color: var(--dark); font-size: 22px; line-height: 1; }
+
 .btn-primary-text {
   color: var(--white);
   font-size: 15px;
@@ -94,6 +113,63 @@ input {
   padding: 16px;
   color: var(--muted);
   font-weight: 800;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  padding: 22px;
+  background: rgba(23, 32, 28, 0.48);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.message-modal {
+  position: relative;
+  width: min(100%, 400px);
+  background: var(--white);
+  border-radius: 18px;
+  padding: 28px 22px 22px;
+  box-shadow: 0 18px 48px rgba(23, 32, 28, 0.2);
+}
+
+.modal-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.modal-close:hover,
+.modal-close:focus-visible {
+  background: var(--paper);
+  color: var(--ink);
+  outline: none;
+}
+
+.modal-title {
+  margin: 0 38px 10px 0;
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.modal-message {
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.modal-button {
+  margin-top: 22px;
 }
 
 /* ---------- Login ---------- */
@@ -232,6 +308,21 @@ input {
   color: var(--muted);
 }
 
+.notification-item { margin: 8px 0; }
+.notification-item p { margin: 0; }
+
+.confirm-payment-btn {
+  margin-top: 8px;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--green);
+  color: var(--dark);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.confirm-payment-btn[disabled] { opacity: 0.55; }
+
 .summary {
   background: var(--dark);
   border-radius: 20px;
@@ -253,7 +344,12 @@ input {
   font-size: 29px;
   font-weight: 800;
   margin-top: 7px;
+  white-space: nowrap;
+  line-height: 1.1;
 }
+
+.summary-value-long { font-size: 24px; }
+.summary-value-extra-long { font-size: 19px; }
 
 .summary-caption {
   color: #aab9ae;
@@ -491,6 +587,94 @@ input {
 .date-badge-month { color: var(--dark); font-size: 9px; font-weight: 800; }
 .month-info { flex: 1; min-width: 0; }
 .participant-summary { color: var(--dark); font-size: 11px; margin-top: 7px; font-weight: 700; }
+
+.category-select {
+  width: 100%;
+  max-width: 180px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 7px;
+  color: var(--ink);
+  background: var(--white);
+  font-size: 11px;
+}
+
+.split-category-select {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.category-input { appearance: auto; }
+
+.month-chart {
+  background: var(--white);
+  border-radius: 18px;
+  padding: 18px;
+  margin-bottom: 18px;
+}
+
+.month-chart-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.month-chart .section-title { margin: 0; }
+.chart-total { color: var(--ink); font-size: 24px; font-weight: 800; margin-top: 6px; }
+.chart-caption { color: var(--muted); font-size: 11px; margin-bottom: 3px; }
+
+.chart-content {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+
+.pie-chart {
+  width: 142px;
+  height: 142px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.pie-chart::after {
+  content: '';
+  position: absolute;
+  inset: 29px;
+  border-radius: 50%;
+  background: var(--white);
+}
+
+.chart-legend { flex: 1; min-width: 0; }
+
+.legend-row {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 0;
+}
+
+.legend-color { width: 9px; height: 9px; border-radius: 3px; }
+.legend-name { color: var(--ink); font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
+.legend-value { color: var(--dark); font-size: 12px; font-weight: 800; }
+.legend-percent { color: var(--muted); font-size: 11px; min-width: 31px; text-align: right; }
+
+@media (max-width: 400px) {
+  .chart-content {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .pie-chart {
+    width: 128px;
+    height: 128px;
+  }
+
+  .chart-legend { width: 100%; }
+}
 
 /* ---------- Câmera (scanner / OCR) ---------- */
 

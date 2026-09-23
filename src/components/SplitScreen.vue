@@ -15,6 +15,17 @@
           <div>
             <p class="item-name">{{ item.product }}</p>
             <p class="item-meta">{{ item.market }} • {{ item.date }}</p>
+            <select
+              class="category-select split-category-select"
+              :value="categoryFor(item)"
+              :aria-label="`Escolher grupo de ${item.product}`"
+              :disabled="disabled"
+              @change="$emit('category', item.id, $event.target.value)"
+            >
+              <option v-for="group in productGroups" :key="group.name" :value="group.name">
+                {{ group.name }}
+              </option>
+            </select>
           </div>
           <p class="item-value">{{ money(item.value) }}</p>
         </div>
@@ -42,13 +53,17 @@
         <span class="btn-primary-text">{{ disabled ? 'Salvando...' : 'Salvar divisão' }}</span>
         <span class="btn-arrow">{{ disabled ? '…' : '→' }}</span>
       </button>
+      <button class="add-item-button" :disabled="disabled" @click="$emit('add-item')">
+        <span class="add-item-icon">＋</span>
+        <span>Adicionar outro item</span>
+      </button>
       <button class="btn-cancel" :disabled="disabled" @click="$emit('cancel')">Cancelar</button>
     </div>
   </div>
 </template>
 
 <script setup>
-import { money } from '../lib/api';
+import { classifyProduct, isProductGroup, money, productGroups } from '../lib/api';
 import { users } from '../lib/users';
 
 defineProps({
@@ -57,5 +72,9 @@ defineProps({
   disabled: { type: Boolean, default: false },
 });
 
-defineEmits(['toggle', 'cancel', 'save']);
+defineEmits(['toggle', 'category', 'cancel', 'save', 'add-item']);
+
+function categoryFor(item) {
+  return isProductGroup(item.category) ? item.category : classifyProduct(item.product);
+}
 </script>
