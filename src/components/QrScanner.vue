@@ -25,7 +25,7 @@
 
 <script setup>
 import jsQR from 'jsqr';
-import { onBeforeUnmount, ref } from 'vue';
+import { nextTick, onBeforeUnmount, ref } from 'vue';
 
 const emit = defineEmits(['scan', 'cancel']);
 
@@ -47,15 +47,19 @@ async function requestCamera() {
 
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' } },
+      video: { facingMode: 'environment' },
     });
     permissionState.value = 'granted';
+    await nextTick();
+    if (!videoEl.value) throw new Error('Elemento de vídeo não foi criado.');
     videoEl.value.srcObject = stream;
     await videoEl.value.play();
     tick();
   } catch (error) {
     permissionState.value = 'denied';
-    cameraMessage.value = 'Não foi possível acessar a câmera. Verifique a permissão deste site e tente novamente.';
+    if (stream) stream.getTracks().forEach((track) => track.stop());
+    stream = null;
+    cameraMessage.value = `Não foi possível acessar a câmera (${error?.name || 'erro desconhecido'}). Verifique a permissão deste site e tente novamente.`;
   }
 }
 
