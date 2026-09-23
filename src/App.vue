@@ -72,7 +72,6 @@ import OcrScanner from './components/OcrScanner.vue';
 import QrScanner from './components/QrScanner.vue';
 import SplitScreen from './components/SplitScreen.vue';
 import {
-  OCR_URL,
   calculateBalances,
   classifyProduct,
   isCurrentMonth,
@@ -133,6 +132,11 @@ async function refreshPaymentNotifications() {
   }
 }
 
+async function refreshBalances() {
+  const balancesData = await requestApi('?action=balances');
+  balances.value = (balancesData.balances || []).map(mapApiBalance);
+}
+
 async function login() {
   if (isLoggingIn.value) return;
   isLoggingIn.value = true;
@@ -152,8 +156,7 @@ async function login() {
     items.value = loadedItems;
 
     try {
-      const balancesData = await requestApi('?action=balances');
-      balances.value = (balancesData.balances || []).map(mapApiBalance);
+      await refreshBalances();
     } catch {
       balances.value = calculateBalances(loadedItems);
     }
@@ -210,21 +213,13 @@ async function readNf(qrCode) {
   }
 }
 
-async function readNfImage(imageBase64) {
+async function readNfImage({ imageBase64, mimeType }) {
   if (!loggedUser.value || isRequesting.value) return;
   isRequesting.value = true;
   loadingLabel.value = 'Lendo a foto da nota...';
   screen.value = 'loading';
   try {
-    const response = await fetch(OCR_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imageBase64 }),
-    });
-    const data = await response.json();
-    if (!response.ok || data.success === false) {
-      throw new Error(data.message || data.detail || 'O serviço OCR não conseguiu ler a imagem.');
-    }
+    const data = await postApi({ action: 'readNfGemini', imageBase64, mimeType });
     const parsedItems = (data.items || [])
       .map((item, index) => ({
         id: `ocr-${Date.now()}-${index}`,
@@ -324,9 +319,7 @@ async function payBalance(balance) {
       creditorId: balance.creditorId,
       value: balance.value,
     });
-    balances.value = balances.value.map((item) =>
-      item.id === balance.id ? { ...item, status: 'Aguardando confirmação' } : item,
-    );
+    await refreshBalances();
     screen.value = 'home';
     await refreshPaymentNotifications();
     showMessage('Pagamento informado. A outra pessoa precisa confirmar para quitar o saldo.');
@@ -349,11 +342,7 @@ async function confirmPayment(notification) {
       balanceId: notification.balanceId,
       creditorId: loggedUser.value.id,
     });
-    balances.value = balances.value.map((item) =>
-      item.id === notification.balanceId
-        ? { ...item, status: 'Pago', paidAt: new Date().toISOString() }
-        : item,
-    );
+    await refreshBalances();
     paymentNotifications.value = paymentNotifications.value.filter((item) => item.id !== notification.id);
     notificationItems.value = notificationItems.value.filter((item) => item.id !== notification.id);
     showMessage('Pagamento confirmado. A dívida foi quitada.');

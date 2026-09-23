@@ -78,7 +78,7 @@ function capture() {
     // igual ao photo.base64 que o app original pegava do expo-camera.
     const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
     const base64 = dataUrl.split(',')[1];
-    emit('capture', base64);
+    emit('capture', { imageBase64: base64, mimeType: 'image/jpeg' });
   } catch (error) {
     capturing.value = false;
     emit('error', 'Não foi possível preparar a foto. Tente novamente.');
