@@ -72,7 +72,6 @@ import OcrScanner from './components/OcrScanner.vue';
 import QrScanner from './components/QrScanner.vue';
 import SplitScreen from './components/SplitScreen.vue';
 import {
-  calculateBalances,
   classifyProduct,
   isCurrentMonth,
   mapApiBalance,
@@ -158,7 +157,8 @@ async function login() {
     try {
       await refreshBalances();
     } catch {
-      balances.value = calculateBalances(loadedItems);
+      // Saldos são a fonte oficial: recalcular pelos itens recriaria dívidas já pagas.
+      balances.value = [];
     }
 
     await refreshPaymentNotifications();
@@ -293,7 +293,7 @@ async function saveDraft() {
     await postApi({ action: 'saveItems', items: draftItems.value });
     const nextItems = [...draftItems.value, ...items.value];
     items.value = nextItems;
-    balances.value = calculateBalances(nextItems);
+    await refreshBalances();
     draftItems.value = [];
     screen.value = 'home';
     refreshNotifications();

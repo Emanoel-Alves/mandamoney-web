@@ -152,7 +152,7 @@ export const mapApiBalance = (balance) => ({
   debtorId: String(balance.debtorId ?? balance.Devedor_ID ?? ''),
   creditorId: String(balance.creditorId ?? balance.Credor_ID ?? ''),
   value: Number(balance.value ?? balance.Valor ?? 0),
-  status: String(balance.status ?? balance.Status ?? 'Pendente'),
+  status: String(balance.status ?? balance.Status ?? 'Pendente').trim(),
   paidAt: String(balance.paidAt ?? balance.Data_Pagamento ?? ''),
 });
 

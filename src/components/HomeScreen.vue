@@ -153,10 +153,10 @@ function nameOf(userId) {
 }
 
 function isPaid(balance) {
-  return balance.status.toLowerCase() === 'pago';
+  return String(balance.status).trim().toLowerCase() === 'pago';
 }
 
 function isAwaitingConfirmation(balance) {
-  return balance.status.toLowerCase().includes('aguardando');
+  return String(balance.status).trim().toLowerCase().includes('aguardando');
 }
 </script>
