@@ -47,6 +47,8 @@
     :unread-count="notifications.unreadCount.value + paymentNotifications.length"
     :show-notifications="showNotifications"
     :notification-items="notificationItems"
+    :pay-loading-id="payLoadingId"
+    :confirm-loading-id="confirmLoadingId"
     @pay="payBalance"
     @confirm-payment="confirmPayment"
     @qr="startQrImport"
@@ -101,6 +103,8 @@ const balances = ref([]);
 const showNotifications = ref(false);
 const notificationItems = ref([]);
 const paymentNotifications = ref([]);
+const payLoadingId = ref('');
+const confirmLoadingId = ref('');
 const modalMessage = ref('');
 const notifications = useNotifications();
 
@@ -309,8 +313,7 @@ async function saveDraft() {
 async function payBalance(balance) {
   if (isRequesting.value) return;
   isRequesting.value = true;
-  loadingLabel.value = 'Atualizando saldo...';
-  screen.value = 'loading';
+  payLoadingId.value = String(balance.id);
   try {
     await postApi({
       action: 'requestPayment',
@@ -320,21 +323,20 @@ async function payBalance(balance) {
       value: balance.value,
     });
     await refreshBalances();
-    screen.value = 'home';
     await refreshPaymentNotifications();
     showMessage('Pagamento informado. A outra pessoa precisa confirmar para quitar o saldo.');
   } catch (error) {
-    screen.value = 'home';
     showMessage(error instanceof Error ? error.message : 'Não foi possível informar o pagamento.');
   } finally {
     isRequesting.value = false;
+    payLoadingId.value = '';
   }
 }
 
 async function confirmPayment(notification) {
   if (isRequesting.value) return;
   isRequesting.value = true;
-  loadingLabel.value = 'Confirmando pagamento...';
+  confirmLoadingId.value = String(notification.id);
   try {
     await postApi({
       action: 'confirmPayment',
@@ -350,6 +352,7 @@ async function confirmPayment(notification) {
     showMessage(error instanceof Error ? error.message : 'Não foi possível confirmar o pagamento.');
   } finally {
     isRequesting.value = false;
+    confirmLoadingId.value = '';
   }
 }
 

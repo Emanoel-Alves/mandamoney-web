@@ -3,7 +3,7 @@
 // atual do Apps Script.
 export const API_URL =
   import.meta.env.VITE_API_URL ||
-  'https://script.google.com/macros/s/AKfycbxHvEm7I20lAZBs_L5s_sAvosk8zfpHDif_b4SSIqrZtHdZ66TG1rC-irFh_JOcNzb7/exec';
+  'https://script.google.com/macros/s/AKfycbx9allZHKAZ3uAfr0_OKTkaMG1s5Wv-BFZm2-Ou6Efrr7TueAi0wTJLpdMEPdQ0LpZ_/exec';
 
 // Em produção (GitHub Pages) defina VITE_OCR_URL num arquivo .env antes do
 // build, apontando para onde o serviço de OCR estiver hospedado — localhost

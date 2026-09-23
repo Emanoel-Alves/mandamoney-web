@@ -25,7 +25,11 @@
               <strong>{{ money(item.value) }}</strong>.
             </p>
             <button class="confirm-payment-btn" :disabled="disabled" @click="$emit('confirm-payment', item)">
-              Confirmar pagamento
+              <svg v-if="confirmLoadingId === item.id" class="button-spinner" viewBox="0 0 24 24" aria-label="Confirmando">
+                <circle class="button-spinner-track" cx="12" cy="12" r="9" />
+                <circle class="button-spinner-path" cx="12" cy="12" r="9" />
+              </svg>
+              <span v-else>Confirmar pagamento</span>
             </button>
           </template>
           <p v-else>Você foi incluído em <strong>{{ item.product }}</strong></p>
@@ -107,7 +111,11 @@
             </div>
             <p class="debt-value">{{ money(balance.value) }}</p>
             <button v-if="!isPaid(balance) && !isAwaitingConfirmation(balance)" class="pay-btn" :disabled="disabled" @click="$emit('pay', balance)">
-              Quitar
+              <svg v-if="payLoadingId === balance.id" class="button-spinner" viewBox="0 0 24 24" aria-label="Solicitando pagamento">
+                <circle class="button-spinner-track" cx="12" cy="12" r="9" />
+                <circle class="button-spinner-path" cx="12" cy="12" r="9" />
+              </svg>
+              <span v-else>Quitar</span>
             </button>
           </div>
         </template>
@@ -141,6 +149,8 @@ const props = defineProps({
   unreadCount: { type: Number, default: 0 },
   showNotifications: { type: Boolean, default: false },
   notificationItems: { type: Array, default: () => [] },
+  payLoadingId: { type: String, default: '' },
+  confirmLoadingId: { type: String, default: '' },
 });
 
 defineEmits(['pay', 'confirm-payment', 'qr', 'ocr', 'manual', 'month', 'logout', 'open-notifications']);
