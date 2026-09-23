@@ -8,7 +8,7 @@ export const API_URL =
 // Em produção (GitHub Pages) defina VITE_OCR_URL num arquivo .env antes do
 // build, apontando para onde o serviço de OCR estiver hospedado — localhost
 // só funciona em desenvolvimento local.
-const OCR_BASE_URL = import.meta.env.VITE_OCR_URL || 'http://localhost:8000';
+const OCR_BASE_URL = import.meta.env.VITE_OCR_URL || 'https://mandamoney-ocr.onrender.com';
 export const OCR_URL = OCR_BASE_URL.replace(/\/$/, '').endsWith('/ocr')
   ? OCR_BASE_URL.replace(/\/$/, '')
   : `${OCR_BASE_URL.replace(/\/$/, '')}/ocr`;
