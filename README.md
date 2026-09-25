@@ -20,6 +20,49 @@ para rodar como um site estático no GitHub Pages.
 - **Backend**: continua usando o mesmo Google Apps Script (`API_URL`) do
   app original, sem nenhuma mudança.
 
+## Marcar participantes que já pagaram no caixa
+
+Na revisão de uma compra, cada item permite marcar os participantes que já
+pagaram a parte deles diretamente no mercado. Essa marcação não cria saldo
+pendente para essas pessoas e é salva junto com o item.
+
+Para a marcação persistir, atualize a aba `Compras_Itens` no Google Sheets e
+o Apps Script:
+
+1. Na primeira linha da coluna I de `Compras_Itens`, adicione o cabeçalho
+   `Pago_Direto_Por`. Os itens já registrados podem permanecer como estão.
+2. Em `getItems()`, acrescente `paidWith` ao objeto de cada item:
+
+   ```js
+   paidWith: String(row[8] || '').split('|').filter(Boolean),
+   ```
+
+3. Em `saveItems(data)`, depois de montar `participants`, leia e valide a
+   nova lista:
+
+   ```js
+   const paidWith = Array.isArray(item.paidWith)
+     ? item.paidWith.map(String).filter((id) =>
+         participants.includes(id) && id !== String(item.buyerId)
+       )
+     : [];
+   ```
+
+4. No `appendRow` de `saveItems`, acrescente `paidWith.join('|')` depois de
+   `participants.join('|')`. No loop que cria saldos, exclua também quem já
+   pagou diretamente:
+
+   ```js
+   participants
+     .filter((id) => id !== String(item.buyerId) && !paidWith.includes(id))
+     .forEach((debtorId) => {
+       addOrUpdateBalance(balancesSheet, debtorId, String(item.buyerId), share);
+     });
+   ```
+
+5. Salve e atualize a implantação do Apps Script para que a URL da API passe
+   a executar a versão nova.
+
 ## Rodando localmente
 
 ```bash

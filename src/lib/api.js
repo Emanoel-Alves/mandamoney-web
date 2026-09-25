@@ -3,7 +3,7 @@
 // atual do Apps Script.
 export const API_URL =
   import.meta.env.VITE_API_URL ||
-  'https://script.google.com/macros/s/AKfycbx9allZHKAZ3uAfr0_OKTkaMG1s5Wv-BFZm2-Ou6Efrr7TueAi0wTJLpdMEPdQ0LpZ_/exec';
+  'https://script.google.com/macros/s/AKfycbxdoezF-tAFZ6mVvk6DlVCkLeJL4sPsTTRA2ya5pEXgY5noglDg0KJLDZ6nQnmuJt4/exec';
 
 // Em produção (GitHub Pages) defina VITE_OCR_URL num arquivo .env antes do
 // build, apontando para onde o serviço de OCR estiver hospedado — localhost
@@ -145,6 +145,7 @@ export const mapApiItem = (item) => ({
   date: String(item.date ?? item.Data ?? ''),
   buyerId: String(item.buyerId ?? item.Comprador_ID ?? item.Comprador ?? ''),
   sharedWith: parseParticipantIds(item.sharedWith ?? item.Pertence_A),
+  paidWith: parseParticipantIds(item.paidWith ?? item.Pago_Direto_Por),
 });
 
 export const mapApiBalance = (balance) => ({
@@ -160,11 +161,13 @@ export const calculateBalances = (items) => {
   const totals = {};
   items.forEach((item) => {
     const share = item.sharedWith.length ? item.value / item.sharedWith.length : item.value;
-    item.sharedWith.filter((id) => id !== item.buyerId).forEach((debtorId) => {
-      const key = `${debtorId}-${item.buyerId}`;
-      totals[key] = totals[key] || { id: key, debtorId, creditorId: item.buyerId, value: 0, status: 'Pendente' };
-      totals[key].value += share;
-    });
+    item.sharedWith
+      .filter((id) => id !== item.buyerId && !item.paidWith?.includes(id))
+      .forEach((debtorId) => {
+        const key = `${debtorId}-${item.buyerId}`;
+        totals[key] = totals[key] || { id: key, debtorId, creditorId: item.buyerId, value: 0, status: 'Pendente' };
+        totals[key].value += share;
+      });
   });
   return Object.values(totals);
 };

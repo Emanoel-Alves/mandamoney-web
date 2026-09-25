@@ -19,6 +19,7 @@
     :items="draftItems"
     :disabled="isRequesting"
     @toggle="togglePerson"
+    @toggle-paid="togglePaidPerson"
     @category="updateDraftCategory"
     @cancel="screen = 'home'"
     @save="saveDraft"
@@ -203,6 +204,7 @@ async function readNf(qrCode) {
         date: data.date || String(item.date ?? item.Data ?? '22/09/2026'),
         buyerId: loggedUser.value.id,
         sharedWith: [loggedUser.value.id],
+        paidWith: [],
       }))
       .filter((item) => item.product && item.value > 0);
 
@@ -233,6 +235,7 @@ async function readNfImage({ imageBase64, mimeType }) {
         date: data.date || String(item.date ?? item.Data ?? '22/09/2026'),
         buyerId: loggedUser.value.id,
         sharedWith: [loggedUser.value.id],
+        paidWith: [],
       }))
       .filter((item) => item.product && item.value > 0);
 
@@ -256,8 +259,23 @@ function togglePerson(itemId, userId) {
           sharedWith: item.sharedWith.includes(userId)
             ? item.sharedWith.filter((id) => id !== userId)
             : [...item.sharedWith, userId],
+          paidWith: item.sharedWith.includes(userId)
+            ? item.paidWith.filter((id) => id !== userId)
+            : item.paidWith,
         },
   );
+}
+
+function togglePaidPerson(itemId, userId) {
+  draftItems.value = draftItems.value.map((item) => {
+    if (item.id !== itemId || !item.sharedWith.includes(userId) || userId === item.buyerId) return item;
+    return {
+      ...item,
+      paidWith: item.paidWith.includes(userId)
+        ? item.paidWith.filter((id) => id !== userId)
+        : [...item.paidWith, userId],
+    };
+  });
 }
 
 function updateDraftCategory(itemId, categoryName) {
@@ -373,6 +391,7 @@ function addManualItem() {
       date: '22/09/2026',
       buyerId: loggedUser.value.id,
       sharedWith: [loggedUser.value.id],
+      paidWith: [],
     },
   ];
   product.value = '';

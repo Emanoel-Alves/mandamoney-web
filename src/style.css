@@ -583,6 +583,11 @@ input {
 
 .split-hint { color: var(--muted); font-size: 11px; margin-top: 14px; }
 
+.paid-participant-label { margin-top: 17px; }
+.paid-participant-hint { color: var(--muted); font-size: 11px; line-height: 1.4; margin: -3px 0 9px; }
+.paid-chip { color: var(--muted); }
+.chip-paid { background: var(--chip-bg); border-color: var(--dark); color: var(--dark); }
+
 .month-row {
   background: var(--white);
   border-radius: 17px;

@@ -47,6 +47,24 @@
         <p v-if="item.sharedWith.length > 0" class="split-hint">
           {{ money(item.value / item.sharedWith.length) }} por pessoa
         </p>
+
+        <p class="participant-label paid-participant-label">JÁ PAGARAM DIRETAMENTE</p>
+        <p class="paid-participant-hint">Marque quem já pagou a parte no caixa. Essa pessoa não ficará com saldo pendente.</p>
+        <div class="chips">
+          <button
+            v-for="person in users.filter((person) => person.id !== item.buyerId && item.sharedWith.includes(person.id))"
+            :key="person.id"
+            class="chip paid-chip"
+            :class="{ 'chip-paid': item.paidWith.includes(person.id) }"
+            :disabled="disabled"
+            @click="$emit('toggle-paid', item.id, person.id)"
+          >
+            {{ item.paidWith.includes(person.id) ? '✓ ' : '' }}{{ person.name }}
+          </button>
+          <span v-if="item.sharedWith.filter((id) => id !== item.buyerId).length === 0" class="paid-participant-hint">
+            Nenhum outro participante selecionado.
+          </span>
+        </div>
       </div>
 
       <button class="btn-primary" :disabled="disabled" @click="$emit('save')">
@@ -72,7 +90,7 @@ defineProps({
   disabled: { type: Boolean, default: false },
 });
 
-defineEmits(['toggle', 'category', 'cancel', 'save', 'add-item']);
+defineEmits(['toggle', 'toggle-paid', 'category', 'cancel', 'save', 'add-item']);
 
 function categoryFor(item) {
   return isProductGroup(item.category) ? item.category : classifyProduct(item.product);
