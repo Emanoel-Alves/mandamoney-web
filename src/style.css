@@ -323,6 +323,21 @@ input {
 
 .confirm-payment-btn[disabled] { opacity: 0.55; }
 
+.contest-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.reject-contest-btn {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--white);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.reject-contest-btn[disabled] { opacity: 0.55; }
+
 .button-spinner {
   width: 16px;
   height: 16px;
@@ -458,8 +473,9 @@ input {
 
 .debt-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  gap: 0 8px;
   padding: 8px 0;
   width: 100%;
   text-align: left;
@@ -467,7 +483,23 @@ input {
 
 .debt-row[disabled] { opacity: 0.55; }
 
+.debt-details-button {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+}
+
 .debt-person { display: flex; align-items: center; flex: 1; min-width: 0; }
+.debt-person-copy { display: flex; flex-direction: column; min-width: 0; }
 
 .small-avatar {
   width: 30px;
@@ -485,8 +517,49 @@ input {
 
 .debt-name { color: var(--ink); font-size: 13px; }
 .debt-paid-note { color: var(--muted); font-size: 11px; margin-top: 3px; }
+.debt-details-label { color: var(--muted); font-size: 10px; margin-top: 4px; }
 .debt-value { color: var(--dark); font-weight: 800; font-size: 14px; margin-left: 8px; }
 .empty-text { color: var(--muted); font-size: 14px; }
+
+.balance-details {
+  width: 100%;
+  padding: 12px 0 4px 40px;
+  border-top: 1px solid var(--line);
+  margin-top: 10px;
+}
+
+.balance-details-title { color: var(--dark); font-size: 12px; font-weight: 800; margin: 0 0 8px; }
+.balance-details-error { color: #a33d2e; font-size: 11px; line-height: 1.4; margin: 0 0 8px; }
+
+.balance-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.balance-item:last-child { border-bottom: 0; }
+.balance-item-info { min-width: 0; }
+.balance-item-info .item-name { font-size: 13px; overflow-wrap: anywhere; }
+.balance-item-status { font-size: 10px; line-height: 1.35; margin-top: 5px; }
+.dispute-pending { color: #8a641c; }
+.dispute-accepted { color: #477337; }
+.dispute-rejected { color: #a33d2e; }
+.balance-item-action { display: flex; flex-direction: column; align-items: flex-end; gap: 7px; flex-shrink: 0; }
+
+.contest-item-btn {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: var(--white);
+  color: var(--dark);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.contest-item-btn[disabled] { opacity: 0.55; }
 
 .pay-btn {
   background: var(--green);

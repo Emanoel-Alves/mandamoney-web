@@ -44,14 +44,24 @@
     :total="total"
     :balances="balances"
     :items="currentMonthItems"
+    :disputes="disputes"
+    :balance-items="balanceItemsById"
+    :balance-items-loading-id="balanceItemsLoadingId"
+    :balance-items-error="balanceItemsError"
     :disabled="isRequesting"
-    :unread-count="notifications.unreadCount.value + paymentNotifications.length"
+    :unread-count="notifications.unreadCount.value + paymentNotifications.length + contestNotifications.length"
     :show-notifications="showNotifications"
     :notification-items="notificationItems"
     :pay-loading-id="payLoadingId"
     :confirm-loading-id="confirmLoadingId"
+    :contest-loading-id="contestLoadingId"
+    :dispute-error="disputeError"
+    :notification-error="contestNotificationError"
     @pay="payBalance"
     @confirm-payment="confirmPayment"
+    @contest="requestContest"
+    @resolve-contest="resolveContest"
+    @details="loadBalanceItems"
     @qr="startQrImport"
     @ocr="startOcrImport"
     @manual="startManualItem"
@@ -64,7 +74,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import HomeScreen from './components/HomeScreen.vue';
 import LoadingScreen from './components/LoadingScreen.vue';
 import LoginScreen from './components/LoginScreen.vue';
@@ -78,6 +88,8 @@ import {
   classifyProduct,
   isCurrentMonth,
   mapApiBalance,
+  mapApiBalanceItem,
+  mapApiDispute,
   mapApiItem,
   normalizePhone,
   postApi,
@@ -100,17 +112,37 @@ const isLoggingIn = ref(false);
 const isRequesting = ref(false);
 const loadingLabel = ref('Entrando na sua casa...');
 const balances = ref([]);
+const disputes = ref([]);
+const contestNotifications = ref([]);
+const disputeError = ref('');
+const contestNotificationError = ref('');
+const balanceItemsById = ref({});
+const balanceItemsLoadingId = ref('');
+const balanceItemsError = ref('');
 
 const showNotifications = ref(false);
 const notificationItems = ref([]);
 const paymentNotifications = ref([]);
 const payLoadingId = ref('');
 const confirmLoadingId = ref('');
+const contestLoadingId = ref('');
 const modalMessage = ref('');
 const notifications = useNotifications();
+let notificationRefreshTimer;
 
 const currentMonthItems = computed(() => items.value.filter((item) => isCurrentMonth(item.date)));
 const total = computed(() => currentMonthItems.value.reduce((sum, item) => sum + item.value, 0));
+
+onMounted(() => {
+  notificationRefreshTimer = window.setInterval(() => {
+    if (!loggedUser.value || showNotifications.value) return;
+    void Promise.all([refreshPaymentNotifications(), refreshContestNotifications()]);
+  }, 30000);
+});
+
+onUnmounted(() => {
+  window.clearInterval(notificationRefreshTimer);
+});
 
 function showMessage(message) {
   modalMessage.value = message;
@@ -120,8 +152,13 @@ function refreshNotifications() {
   notifications.refresh(loggedUser.value?.id, items.value);
 }
 
-function openNotifications() {
-  notificationItems.value = [...notifications.unreadItems.value, ...paymentNotifications.value];
+async function openNotifications() {
+  await Promise.all([refreshPaymentNotifications(), refreshDisputes(), refreshContestNotifications()]);
+  notificationItems.value = [
+    ...notifications.unreadItems.value,
+    ...paymentNotifications.value,
+    ...contestNotifications.value,
+  ];
   showNotifications.value = true;
   notifications.markAllSeen(loggedUser.value.id, items.value);
 }
@@ -136,9 +173,66 @@ async function refreshPaymentNotifications() {
   }
 }
 
+async function refreshDisputes() {
+  if (!loggedUser.value) return;
+  try {
+    const data = await requestApi(`?action=disputes&userId=${encodeURIComponent(loggedUser.value.id)}`);
+    if (!Array.isArray(data.disputes)) {
+      throw new Error(data.message || data.error || 'Atualize o Apps Script para carregar as contestações.');
+    }
+    disputes.value = (data.disputes || []).map(mapApiDispute);
+    disputeError.value = '';
+  } catch (error) {
+    disputes.value = [];
+    disputeError.value = error instanceof Error ? error.message : 'Não foi possível carregar as contestações.';
+  }
+}
+
+async function refreshContestNotifications() {
+  if (!loggedUser.value) return;
+  try {
+    const data = await requestApi(`?action=contestNotifications&userId=${encodeURIComponent(loggedUser.value.id)}`);
+    if (!Array.isArray(data.notifications)) {
+      throw new Error(data.message || data.error || 'Atualize o Apps Script para carregar as notificações de contestação.');
+    }
+    contestNotifications.value = (data.notifications || []).map((item) => ({
+      ...mapApiDispute(item),
+      type: 'contest_request',
+    }));
+    contestNotificationError.value = '';
+  } catch (error) {
+    contestNotifications.value = [];
+    contestNotificationError.value = error instanceof Error ? error.message : 'Não foi possível carregar as notificações de contestação.';
+  }
+}
+
 async function refreshBalances() {
   const balancesData = await requestApi('?action=balances');
   balances.value = (balancesData.balances || []).map(mapApiBalance);
+}
+
+async function loadBalanceItems(balance) {
+  if (!loggedUser.value) return;
+  const balanceId = String(balance.id);
+  if (Object.prototype.hasOwnProperty.call(balanceItemsById.value, balanceId)) return;
+  balanceItemsError.value = '';
+  balanceItemsLoadingId.value = balanceId;
+  try {
+    const data = await requestApi(
+      `?action=balanceItems&balanceId=${encodeURIComponent(balanceId)}&userId=${encodeURIComponent(loggedUser.value.id)}`,
+    );
+    if (!Array.isArray(data.items)) {
+      throw new Error(data.message || data.error || 'Atualize o Apps Script para carregar os itens do saldo.');
+    }
+    balanceItemsById.value = {
+      ...balanceItemsById.value,
+      [balanceId]: data.items.map(mapApiBalanceItem),
+    };
+  } catch (error) {
+    balanceItemsError.value = error instanceof Error ? error.message : 'Não foi possível carregar os itens do saldo.';
+  } finally {
+    balanceItemsLoadingId.value = '';
+  }
 }
 
 async function login() {
@@ -158,6 +252,7 @@ async function login() {
     const itemsData = await requestApi('?action=items');
     const loadedItems = (itemsData.items || []).map(mapApiItem);
     items.value = loadedItems;
+    balanceItemsById.value = {};
 
     try {
       await refreshBalances();
@@ -167,6 +262,7 @@ async function login() {
     }
 
     await refreshPaymentNotifications();
+    await Promise.all([refreshDisputes(), refreshContestNotifications()]);
     refreshNotifications();
     screen.value = 'home';
   } catch (error) {
@@ -315,6 +411,7 @@ async function saveDraft() {
     await postApi({ action: 'saveItems', items: draftItems.value });
     const nextItems = [...draftItems.value, ...items.value];
     items.value = nextItems;
+    balanceItemsById.value = {};
     await refreshBalances();
     draftItems.value = [];
     screen.value = 'home';
@@ -374,6 +471,57 @@ async function confirmPayment(notification) {
   }
 }
 
+async function requestContest({ balance, item, value }) {
+  if (!loggedUser.value || isRequesting.value) return;
+  isRequesting.value = true;
+  contestLoadingId.value = String(item.id);
+  try {
+    await postApi({
+      action: 'requestContest',
+      balanceId: balance.id,
+      itemId: item.id,
+      debtorId: balance.debtorId,
+      creditorId: balance.creditorId,
+      value,
+    });
+    await Promise.all([refreshBalances(), refreshDisputes(), refreshContestNotifications()]);
+    notificationItems.value = [
+      ...notificationItems.value.filter((notification) => notification.type !== 'contest_request'),
+      ...contestNotifications.value,
+    ];
+    showMessage('Contestação enviada. A outra pessoa receberá uma notificação para aceitar ou recusar.');
+  } catch (error) {
+    showMessage(error instanceof Error ? error.message : 'Não foi possível contestar este item.');
+  } finally {
+    isRequesting.value = false;
+    contestLoadingId.value = '';
+  }
+}
+
+async function resolveContest(notification, decision) {
+  if (!loggedUser.value || isRequesting.value) return;
+  isRequesting.value = true;
+  contestLoadingId.value = String(notification.id);
+  try {
+    await postApi({
+      action: 'resolveContest',
+      notificationId: notification.id,
+      creditorId: loggedUser.value.id,
+      decision,
+    });
+    await Promise.all([refreshBalances(), refreshDisputes(), refreshContestNotifications()]);
+    notificationItems.value = notificationItems.value.filter((item) => item.id !== notification.id);
+    showMessage(decision === 'accepted'
+      ? 'Contestação aceita. O valor foi removido do saldo devedor.'
+      : 'Contestação recusada. O valor continua no saldo devedor.');
+  } catch (error) {
+    showMessage(error instanceof Error ? error.message : 'Não foi possível responder à contestação.');
+  } finally {
+    isRequesting.value = false;
+    contestLoadingId.value = '';
+  }
+}
+
 function addManualItem() {
   const parsedValue = Number(value.value.replace(',', '.'));
   if (!product.value.trim() || !parsedValue || !loggedUser.value) {
@@ -403,6 +551,7 @@ function addManualItem() {
 
 function logout() {
   loggedUser.value = null;
+  balanceItemsById.value = {};
   screen.value = 'login';
 }
 </script>

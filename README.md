@@ -13,12 +13,13 @@ para rodar como um site estático no GitHub Pages.
   libera câmera em `localhost` mesmo sem HTTPS para desenvolvimento).
 - **Notificações**: como GitHub Pages é hospedagem estática (sem servidor
   rodando push), não dá pra usar push notification de verdade. Em vez
-  disso, tem um sininho 🔔 no topo da tela inicial que acende quando existem
-  itens novos em que você foi marcado como participante e ainda não viu.
-  Isso é guardado no `localStorage` do navegador — funciona por
-  dispositivo/navegador, não sincroniza entre aparelhos.
+  disso, o sininho 🔔 mostra itens novos e solicitações de pagamento ou
+  contestação consultadas no Apps Script quando o painel é aberto. Os itens
+  novos são guardados no `localStorage` do navegador; solicitações ficam na
+  planilha e aparecem em outros dispositivos.
 - **Backend**: continua usando o mesmo Google Apps Script (`API_URL`) do
-  app original, sem nenhuma mudança.
+  app original; fluxos que dependem de novas ações exigem atualizar e
+  reimplantar o script.
 
 ## Marcar participantes que já pagaram no caixa
 
@@ -62,6 +63,97 @@ o Apps Script:
 
 5. Salve e atualize a implantação do Apps Script para que a URL da API passe
    a executar a versão nova.
+
+## Detalhar e contestar saldos
+
+Cada saldo pode ser expandido para ver os itens e os valores que o compõem.
+O devedor pode contestar um item pendente; o credor recebe uma solicitação no
+painel de notificações e pode aceitá-la ou recusá-la. Ao aceitar, o valor da
+parte daquele item é subtraído do saldo; ao recusar, o saldo não muda.
+
+O Apps Script precisa manter uma relação entre cada item e a linha de saldo
+que recebeu sua parte. Isso evita incluir no detalhamento compras antigas que
+já foram quitadas:
+
+1. Copie o conteúdo de [`apps-script/contestations.gs`](./apps-script/contestations.gs)
+   para o projeto Apps Script que já contém `SHEET_ID` e `response()`.
+2. Em `addOrUpdateBalance`, retorne o ID do saldo atualizado ou criado. No
+   caso de atualizar uma linha pendente, antes do `return` existente retorne:
+
+   ```js
+   return String(rows[existingIndex][0]);
+   ```
+
+   Na criação, gere o ID antes do `appendRow`, use-o na primeira coluna e
+   retorne-o:
+
+   ```js
+   const balanceId = Utilities.getUuid();
+   sheet.appendRow([balanceId, String(debtorId), String(creditorId), Number(value), 'Pendente', '']);
+   return balanceId;
+   ```
+
+3. Em `saveItems(data)`, no ponto em que cria o saldo para cada participante
+   devedor, registre também a relação. Substitua a chamada a
+   `addOrUpdateBalance(...)` por:
+
+   ```js
+   const balanceId = addOrUpdateBalance(
+     balancesSheet,
+     debtorId,
+     String(item.buyerId),
+     share
+   );
+   recordBalanceItem(
+     file,
+     balanceId,
+     String(item.id),
+     debtorId,
+     String(item.buyerId),
+     share
+   );
+   ```
+
+   Mantenha a exclusão dos participantes informados em `paidWith` conforme
+   a seção anterior.
+4. Em `doGet(e)`, adicione os casos:
+
+   ```js
+   if (action === 'balanceItems') return getBalanceItems(e.parameter.balanceId, e.parameter.userId);
+   if (action === 'disputes') return getDisputes(e.parameter.userId);
+   if (action === 'contestNotifications') return contestNotifications(e.parameter.userId);
+   ```
+
+5. Em `doPost(e)`, adicione:
+
+   ```js
+   if (data.action === 'requestContest') return requestContest(data);
+   if (data.action === 'resolveContest') return resolveContest(data);
+   ```
+
+6. Para relacionar os saldos e compras que já existem, execute uma única vez
+   `backfillBalanceItems()` no editor do Apps Script **antes de usar
+   contestações**. A migração presume que as linhas de compras e saldos foram
+   acrescentadas em ordem cronológica. Ela cria a aba `Saldo_Itens`; não a
+   execute novamente depois de preenchida.
+7. Em `requestPayment(data)`, altere a condição `available` para aceitar
+   somente o status pendente. Isso impede solicitar pagamento enquanto uma
+   contestação daquele saldo aguarda resposta:
+
+   ```js
+   const available = status === 'pendente';
+   ```
+
+   A função `requestContest` também só aceita saldos pendentes. A aba
+   `Contestacoes` e seus cabeçalhos são criados automaticamente na primeira
+   solicitação.
+8. Salve e atualize a implantação do Apps Script. Sem essa implantação, as
+   ações de contestação retornarão erro, embora o restante do app continue
+   funcionando.
+
+Datas ISO retornadas pela planilha são normalizadas para `dd/MM/yyyy` ao
+carregar itens, para que a tela inicial e o histórico usem o mesmo formato
+após um novo login.
 
 ## Rodando localmente
 

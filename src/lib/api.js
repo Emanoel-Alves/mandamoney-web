@@ -3,7 +3,7 @@
 // atual do Apps Script.
 export const API_URL =
   import.meta.env.VITE_API_URL ||
-  'https://script.google.com/macros/s/AKfycbxdoezF-tAFZ6mVvk6DlVCkLeJL4sPsTTRA2ya5pEXgY5noglDg0KJLDZ6nQnmuJt4/exec';
+  'https://script.google.com/macros/s/AKfycbwuSCj2c5EXsLXNCyjHHhcfxuKxTiOakFNSrDqLQCCb2cvh0lv8E-IZ1lrkiJGJtQfR/exec';
 
 // Em produção (GitHub Pages) defina VITE_OCR_URL num arquivo .env antes do
 // build, apontando para onde o serviço de OCR estiver hospedado — localhost
@@ -22,6 +22,22 @@ export const formatPaidDate = (value) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleDateString('pt-BR');
+};
+
+export const formatPurchaseDate = (value) => {
+  if (!value) return '';
+  const text = String(value).trim();
+
+  const isoDate = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|T)/);
+  if (isoDate) return `${isoDate[3]}/${isoDate[2]}/${isoDate[1]}`;
+
+  const brazilianDate = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (brazilianDate) return text;
+
+  const date = new Date(text);
+  return Number.isNaN(date.getTime())
+    ? text
+    : date.toLocaleDateString('pt-BR', { timeZone: 'UTC' });
 };
 
 export const normalizePhone = (value) => value.replace(/\D/g, '');
@@ -142,7 +158,7 @@ export const mapApiItem = (item) => ({
   category: String(item.category ?? item.Categoria ?? item.Grupo ?? ''),
   value: Number(item.value ?? item.Valor_Total ?? 0),
   market: String(item.market ?? item.Mercado ?? ''),
-  date: String(item.date ?? item.Data ?? ''),
+  date: formatPurchaseDate(item.date ?? item.Data ?? ''),
   buyerId: String(item.buyerId ?? item.Comprador_ID ?? item.Comprador ?? ''),
   sharedWith: parseParticipantIds(item.sharedWith ?? item.Pertence_A),
   paidWith: parseParticipantIds(item.paidWith ?? item.Pago_Direto_Por),
@@ -155,6 +171,27 @@ export const mapApiBalance = (balance) => ({
   value: Number(balance.value ?? balance.Valor ?? 0),
   status: String(balance.status ?? balance.Status ?? 'Pendente').trim(),
   paidAt: String(balance.paidAt ?? balance.Data_Pagamento ?? ''),
+});
+
+export const mapApiDispute = (dispute) => ({
+  id: String(dispute.id ?? dispute.ID ?? ''),
+  balanceId: String(dispute.balanceId ?? dispute.Saldo_ID ?? ''),
+  itemId: String(dispute.itemId ?? dispute.Item_ID ?? ''),
+  debtorId: String(dispute.debtorId ?? dispute.Devedor_ID ?? ''),
+  creditorId: String(dispute.creditorId ?? dispute.Credor_ID ?? ''),
+  value: Number(dispute.value ?? dispute.Valor ?? 0),
+  status: String(dispute.status ?? dispute.Status ?? 'Pendente').trim(),
+  requestedAt: String(dispute.requestedAt ?? dispute.Data_Solicitacao ?? ''),
+  resolvedAt: String(dispute.resolvedAt ?? dispute.Data_Resolucao ?? ''),
+  product: String(dispute.product ?? dispute.Produto ?? ''),
+});
+
+export const mapApiBalanceItem = (item) => ({
+  itemId: String(item.itemId ?? item.Item_ID ?? ''),
+  value: Number(item.value ?? item.Valor ?? 0),
+  product: String(item.product ?? item.Produto ?? ''),
+  market: String(item.market ?? item.Mercado ?? ''),
+  date: formatPurchaseDate(item.date ?? item.Data ?? ''),
 });
 
 export const calculateBalances = (items) => {
