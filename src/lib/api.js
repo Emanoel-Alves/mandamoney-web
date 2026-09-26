@@ -40,6 +40,23 @@ export const formatPurchaseDate = (value) => {
     : date.toLocaleDateString('pt-BR', { timeZone: 'UTC' });
 };
 
+export const formatCalendarDate = (date = new Date()) => {
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  return `${day}/${month}/${date.getFullYear()}`;
+};
+
+export const formatTodayLabel = (date = new Date()) => {
+  const weekday = new Intl.DateTimeFormat('pt-BR', { weekday: 'long' }).format(date);
+  const month = new Intl.DateTimeFormat('pt-BR', { month: 'short' }).format(date).replace('.', '');
+  const day = date.getDate();
+  const year = date.getFullYear();
+  return `${weekday.charAt(0).toLocaleUpperCase('pt-BR')}${weekday.slice(1)}, ${day} de ${month} de ${year}`;
+};
+
+export const formatMonthName = (date = new Date(), style = 'long') =>
+  new Intl.DateTimeFormat('pt-BR', { month: style }).format(date);
+
 export const normalizePhone = (value) => value.replace(/\D/g, '');
 
 export const formatPhone = (value) => {
@@ -114,7 +131,7 @@ export const productGroups = [
       'fio dental', 'enxaguante', 'desodorante', 'perfume', 'absorvente', 'fralda', 'lenço umedecido',
       'papel higienico', 'papel higiênico', 'algodao', 'algodão', 'cotonete', 'barbeador', 'lamina', 'lâmina',
       'creme de barbear', 'detergente', 'sabao', 'sabão', 'amaciante', 'alvejante', 'agua sanitaria',
-      'água sanitária', 'esponja', 'palha de aco', 'palha de aço', 'saco de lixo', 'limpeza', 'higiene',
+      'água sanitária', 'esponja', 'palha de aco', 'palha de aço', 'saco de lixo', 'limpeza', 'higiene', 'papel hig',
   ],
   },
   {
@@ -152,17 +169,24 @@ export const parseParticipantIds = (value) => {
     .filter(Boolean);
 };
 
-export const mapApiItem = (item) => ({
-  id: String(item.id ?? item.ID_Item ?? Date.now()),
-  product: String(item.product ?? item.Produto ?? ''),
-  category: String(item.category ?? item.Categoria ?? item.Grupo ?? ''),
-  value: Number(item.value ?? item.Valor_Total ?? 0),
-  market: String(item.market ?? item.Mercado ?? ''),
-  date: formatPurchaseDate(item.date ?? item.Data ?? ''),
-  buyerId: String(item.buyerId ?? item.Comprador_ID ?? item.Comprador ?? ''),
-  sharedWith: parseParticipantIds(item.sharedWith ?? item.Pertence_A),
-  paidWith: parseParticipantIds(item.paidWith ?? item.Pago_Direto_Por),
-});
+export const mapApiItem = (item) => {
+  const product = String(item.product ?? item.Produto ?? '');
+  const savedCategory = String(item.category ?? item.Categoria ?? item.Grupo ?? '').trim();
+
+  return {
+    id: String(item.id ?? item.ID_Item ?? Date.now()),
+    product,
+    category: !savedCategory || savedCategory === 'Outros'
+      ? classifyProduct(product)
+      : savedCategory,
+    value: Number(item.value ?? item.Valor_Total ?? 0),
+    market: String(item.market ?? item.Mercado ?? ''),
+    date: formatPurchaseDate(item.date ?? item.Data ?? ''),
+    buyerId: String(item.buyerId ?? item.Comprador_ID ?? item.Comprador ?? ''),
+    sharedWith: parseParticipantIds(item.sharedWith ?? item.Pertence_A),
+    paidWith: parseParticipantIds(item.paidWith ?? item.Pago_Direto_Por),
+  };
+};
 
 export const mapApiBalance = (balance) => ({
   id: String(balance.id ?? balance.ID ?? `${balance.debtorId}-${balance.creditorId}`),
@@ -209,4 +233,19 @@ export const calculateBalances = (items) => {
   return Object.values(totals);
 };
 
-export const isCurrentMonth = (date) => date.includes('09/2026') || date.includes('2026-09') || date.includes('Sep 2026');
+export const isCurrentMonth = (value, currentDate = new Date()) => {
+  const text = String(value ?? '').trim();
+  const isoDate = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|T)/);
+  const brazilianDate = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  const year = Number(isoDate?.[1] ?? brazilianDate?.[3]);
+  const month = Number(isoDate?.[2] ?? brazilianDate?.[2]);
+
+  if (Number.isInteger(year) && Number.isInteger(month)) {
+    return year === currentDate.getFullYear() && month === currentDate.getMonth() + 1;
+  }
+
+  const parsedDate = new Date(text);
+  return !Number.isNaN(parsedDate.getTime()) &&
+    parsedDate.getFullYear() === currentDate.getFullYear() &&
+    parsedDate.getMonth() === currentDate.getMonth();
+};

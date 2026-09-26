@@ -36,7 +36,7 @@
     @add="addManualItem"
   />
 
-  <MonthScreen v-else-if="screen === 'month'" :items="currentMonthItems" @back="screen = 'home'" />
+  <MonthScreen v-else-if="screen === 'month'" :items="currentMonthItems" :current-date="currentDate" @back="screen = 'home'" />
 
   <HomeScreen
     v-else
@@ -44,6 +44,7 @@
     :total="total"
     :balances="balances"
     :items="currentMonthItems"
+    :current-date="currentDate"
     :disputes="disputes"
     :balance-items="balanceItemsById"
     :balance-items-loading-id="balanceItemsLoadingId"
@@ -86,6 +87,7 @@ import QrScanner from './components/QrScanner.vue';
 import SplitScreen from './components/SplitScreen.vue';
 import {
   classifyProduct,
+  formatCalendarDate,
   isCurrentMonth,
   mapApiBalance,
   mapApiBalanceItem,
@@ -130,11 +132,13 @@ const modalMessage = ref('');
 const notifications = useNotifications();
 let notificationRefreshTimer;
 
-const currentMonthItems = computed(() => items.value.filter((item) => isCurrentMonth(item.date)));
+const currentDate = ref(new Date());
+const currentMonthItems = computed(() => items.value.filter((item) => isCurrentMonth(item.date, currentDate.value)));
 const total = computed(() => currentMonthItems.value.reduce((sum, item) => sum + item.value, 0));
 
 onMounted(() => {
   notificationRefreshTimer = window.setInterval(() => {
+    currentDate.value = new Date();
     if (!loggedUser.value || showNotifications.value) return;
     void Promise.all([refreshPaymentNotifications(), refreshContestNotifications()]);
   }, 30000);
@@ -295,9 +299,10 @@ async function readNf(qrCode) {
       .map((item, index) => ({
         id: `nf-${Date.now()}-${index}`,
         product: String(item.product ?? item.Produto ?? ''),
+        category: classifyProduct(String(item.product ?? item.Produto ?? '')),
         value: Number(item.value ?? item.Valor_Total ?? item.valor ?? 0),
         market: data.market || String(item.market ?? item.Mercado ?? 'NFC-e'),
-        date: data.date || String(item.date ?? item.Data ?? '22/09/2026'),
+        date: data.date || String(item.date ?? item.Data ?? formatCalendarDate()),
         buyerId: loggedUser.value.id,
         sharedWith: [loggedUser.value.id],
         paidWith: [],
@@ -326,9 +331,10 @@ async function readNfImage({ imageBase64, mimeType }) {
       .map((item, index) => ({
         id: `ocr-${Date.now()}-${index}`,
         product: String(item.product ?? item.Produto ?? ''),
+        category: classifyProduct(String(item.product ?? item.Produto ?? '')),
         value: Number(item.value ?? item.Valor_Total ?? item.valor ?? 0),
         market: data.market || String(item.market ?? item.Mercado ?? 'Compra por OCR'),
-        date: data.date || String(item.date ?? item.Data ?? '22/09/2026'),
+        date: data.date || String(item.date ?? item.Data ?? formatCalendarDate()),
         buyerId: loggedUser.value.id,
         sharedWith: [loggedUser.value.id],
         paidWith: [],
@@ -408,8 +414,12 @@ async function saveDraft() {
   loadingLabel.value = 'Salvando divisão...';
   screen.value = 'loading';
   try {
-    await postApi({ action: 'saveItems', items: draftItems.value });
-    const nextItems = [...draftItems.value, ...items.value];
+    const itemsToSave = draftItems.value.map((item) => ({
+      ...item,
+      category: item.category || classifyProduct(item.product),
+    }));
+    await postApi({ action: 'saveItems', items: itemsToSave });
+    const nextItems = [...itemsToSave, ...items.value];
     items.value = nextItems;
     balanceItemsById.value = {};
     await refreshBalances();
@@ -536,7 +546,7 @@ function addManualItem() {
       category: category.value || classifyProduct(product.value),
       value: parsedValue,
       market: market.value.trim() || 'Compra manual',
-      date: '22/09/2026',
+      date: formatCalendarDate(),
       buyerId: loggedUser.value.id,
       sharedWith: [loggedUser.value.id],
       paidWith: [],

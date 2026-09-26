@@ -2,7 +2,7 @@
   <div class="page">
     <div class="page-content">
       <button class="back" @click="$emit('back')">← Voltar</button>
-      <h1 class="screen-title">Compras de setembro</h1>
+      <h1 class="screen-title">Compras de {{ monthName }} de {{ currentDate.getFullYear() }}</h1>
       <p class="screen-copy">{{ items.length }} itens registrados neste mês.</p>
 
       <section class="month-chart" aria-labelledby="month-chart-title">
@@ -31,7 +31,7 @@
       <div v-for="item in items" :key="item.id" class="month-row">
         <div class="date-badge">
           <span class="date-badge-day">{{ item.date.slice(0, 2) }}</span>
-          <span class="date-badge-month">SET</span>
+          <span class="date-badge-month">{{ monthAbbreviation }}</span>
         </div>
         <div class="month-info">
           <p class="item-name">{{ item.product }}</p>
@@ -58,16 +58,19 @@
 
 <script setup>
 import { computed, ref } from 'vue';
-import { classifyProduct, isProductGroup, money, productGroups } from '../lib/api';
+import { classifyProduct, formatMonthName, isProductGroup, money, productGroups } from '../lib/api';
 import { users } from '../lib/users';
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
+  currentDate: { type: Date, default: () => new Date() },
 });
 
 defineEmits(['back']);
 
 const categoryOverrides = ref(loadCategoryOverrides());
+const monthName = computed(() => formatMonthName(props.currentDate));
+const monthAbbreviation = computed(() => formatMonthName(props.currentDate, 'short').replace('.', '').toLocaleUpperCase('pt-BR'));
 
 const categories = computed(() => {
   const totals = productGroups.map((category) => ({ ...category, value: 0 }));

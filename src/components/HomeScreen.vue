@@ -72,12 +72,12 @@
           >
             {{ totalDisplay }}
           </p>
-          <p class="summary-caption">em setembro</p>
+          <p class="summary-caption">em {{ monthName }}</p>
         </div>
         <div class="summary-month">
           <p class="summary-label">MÊS ATUAL</p>
-          <p class="month-value">SET</p>
-          <p class="summary-caption">2026</p>
+          <p class="month-value">{{ monthAbbreviation }}</p>
+          <p class="summary-caption">{{ currentDate.getFullYear() }}</p>
         </div>
       </div>
 
@@ -209,12 +209,13 @@
 
 <script setup>
 import { computed, ref } from 'vue';
-import { money, formatPaidDate } from '../lib/api';
+import { money, formatPaidDate, formatMonthName, formatTodayLabel } from '../lib/api';
 import { users } from '../lib/users';
 
 const props = defineProps({
   user: { type: Object, required: true },
   total: { type: Number, required: true },
+  currentDate: { type: Date, default: () => new Date() },
   balances: { type: Array, default: () => [] },
   items: { type: Array, default: () => [] },
   disputes: { type: Array, default: () => [] },
@@ -235,7 +236,9 @@ const props = defineProps({
 const emit = defineEmits(['pay', 'confirm-payment', 'contest', 'resolve-contest', 'details', 'qr', 'ocr', 'manual', 'month', 'logout', 'open-notifications']);
 
 const totalDisplay = computed(() => money(props.total));
-const todayLabel = 'TERÇA, 22 SET 2026';
+const todayLabel = computed(() => formatTodayLabel(props.currentDate));
+const monthName = computed(() => formatMonthName(props.currentDate));
+const monthAbbreviation = computed(() => formatMonthName(props.currentDate, 'short').replace('.', '').toLocaleUpperCase('pt-BR'));
 const expandedBalanceId = ref('');
 
 function toggleBalanceDetails(balance) {
