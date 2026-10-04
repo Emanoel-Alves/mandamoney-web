@@ -26,7 +26,56 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      - name: Validate API URLs
+        env:
+          PRODUCTION_API_URL: ${{ secrets.VITE_MANDAMONEY_API_URL }}
+          TEST_API_URL: ${{ secrets.VITE_MANDAMONEY_TEST_API_URL }}
+        run: |
+          node --input-type=module <<'NODE'
+          for (const [name, value, required] of [
+            ["VITE_MANDAMONEY_API_URL", process.env.PRODUCTION_API_URL, true],
+            ["VITE_MANDAMONEY_TEST_API_URL", process.env.TEST_API_URL, false],
+          ]) {
+            if (!value && !required) {
+              console.log(`${name} is not configured; the /test site will not be built yet.`);
+              continue;
+            }
+            if (!value) {
+              throw new Error(`${name} must be configured before publishing.`);
+            }
+            const url = new URL(value);
+            if (
+              url.protocol !== "https:" ||
+              url.username ||
+              url.password ||
+              url.search ||
+              url.hash ||
+              !url.pathname.replace(/\/$/, "").endsWith("/api/v1")
+            ) {
+              throw new Error(`${name} must be an HTTPS API URL ending in /api/v1.`);
+            }
+          }
+          if (process.env.TEST_API_URL && process.env.PRODUCTION_API_URL === process.env.TEST_API_URL) {
+            throw new Error("Production and test frontends must use different API URLs.");
+          }
+          NODE
+
       - run: npm run build
+        env:
+          VITE_MANDAMONEY_API_URL: ${{ secrets.VITE_MANDAMONEY_API_URL }}
+
+      - name: Build test site
+        env:
+          VITE_MANDAMONEY_API_URL: ${{ secrets.VITE_MANDAMONEY_TEST_API_URL }}
+        run: |
+          if [ -z "$VITE_MANDAMONEY_API_URL" ]; then
+            echo "Skipping /test build until VITE_MANDAMONEY_TEST_API_URL is configured."
+            exit 0
+          fi
+          npm run build -- --outDir dist-test
+          mkdir -p dist/test
+          cp -a dist-test/. dist/test/
 
       - uses: actions/upload-pages-artifact@v3
         with:

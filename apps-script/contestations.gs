@@ -57,7 +57,114 @@ function getBalanceItems(balanceId, userId) {
       };
     });
 
-  return response({ success: true, items });
+  return response({
+    success: true,
+    items,
+    adjustments: getBalanceAdjustments(file, normalizedBalanceId),
+  });
+}
+
+function getBalanceAdjustments(file, balanceId) {
+  const sheet = getBalanceAdjustmentsSheet(file);
+  return sheet.getDataRange().getValues().slice(1)
+    .filter((row) => String(row[1]).trim() === balanceId)
+    .map((row) => ({
+      id: String(row[0]),
+      value: Number(row[5]) || 0,
+      date: row[6] || '',
+    }));
+}
+
+function balanceDebts(data) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    const balanceId = String(data.balanceId || '').trim();
+    const userId = String(data.userId || '').trim();
+    if (!balanceId || !userId) throw new Error('Informe o saldo e o usuário para balancear as contas.');
+
+    const file = SpreadsheetApp.openById(SHEET_ID);
+    const balancesSheet = file.getSheetByName('Saldos');
+    const rows = balancesSheet.getDataRange().getValues();
+    const balanceIndex = rows.findIndex((row, index) =>
+      index > 0 && String(row[0]).trim() === balanceId
+    );
+    if (balanceIndex === -1) throw new Error('Saldo não encontrado.');
+
+    const balance = rows[balanceIndex];
+    const debtorId = String(balance[1]).trim();
+    const creditorId = String(balance[2]).trim();
+    if (userId !== debtorId && userId !== creditorId) {
+      throw new Error('Você não pode balancear este saldo.');
+    }
+    if (String(balance[4]).trim().toLowerCase() !== 'pendente') {
+      throw new Error('Só é possível balancear saldos pendentes.');
+    }
+
+    const counterpartIndex = rows.findIndex((row, index) =>
+      index > 0 &&
+      String(row[1]).trim() === creditorId &&
+      String(row[2]).trim() === debtorId &&
+      String(row[4]).trim().toLowerCase() === 'pendente'
+    );
+    if (counterpartIndex === -1) {
+      throw new Error('Não há um saldo pendente no sentido contrário para balancear.');
+    }
+
+    const counterpart = rows[counterpartIndex];
+    const balanceCents = Math.round(Number(balance[3]) * 100);
+    const counterpartCents = Math.round(Number(counterpart[3]) * 100);
+    if (!Number.isFinite(balanceCents) || !Number.isFinite(counterpartCents) ||
+        balanceCents <= 0 || counterpartCents <= 0) {
+      throw new Error('Os valores dos saldos não são válidos para balanceamento.');
+    }
+
+    const discountedCents = Math.min(balanceCents, counterpartCents);
+    const balanceRemainingCents = balanceCents - discountedCents;
+    const counterpartRemainingCents = counterpartCents - discountedCents;
+    const transactionId = Utilities.getUuid();
+    const balancedAt = new Date();
+    const adjustmentsSheet = getBalanceAdjustmentsSheet(file);
+    const firstAdjustmentRow = adjustmentsSheet.getLastRow() + 1;
+    adjustmentsSheet.getRange(firstAdjustmentRow, 1, 2, 7).setValues([
+      [
+        transactionId,
+        String(balance[0]),
+        String(counterpart[0]),
+        debtorId,
+        creditorId,
+        discountedCents / 100,
+        balancedAt,
+      ],
+      [
+        transactionId,
+        String(counterpart[0]),
+        String(balance[0]),
+        creditorId,
+        debtorId,
+        discountedCents / 100,
+        balancedAt,
+      ],
+    ]);
+
+    balancesSheet.getRange(balanceIndex + 1, 4, 1, 2).setValues([[
+      balanceRemainingCents / 100,
+      balanceRemainingCents === 0 ? 'Balanceado' : 'Pendente',
+    ]]);
+    balancesSheet.getRange(counterpartIndex + 1, 4, 1, 2).setValues([[
+      counterpartRemainingCents / 100,
+      counterpartRemainingCents === 0 ? 'Balanceado' : 'Pendente',
+    ]]);
+
+    return response({
+      success: true,
+      message: 'Contas balanceadas com sucesso.',
+      discounted: discountedCents / 100,
+    });
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function readDisputesForUser(userId) {
@@ -269,6 +376,23 @@ function getBalanceItemsSheet(file) {
       'Devedor_ID',
       'Credor_ID',
       'Valor',
+    ]);
+  }
+  return sheet;
+}
+
+function getBalanceAdjustmentsSheet(file) {
+  let sheet = file.getSheetByName('Balanceamentos');
+  if (!sheet) {
+    sheet = file.insertSheet('Balanceamentos');
+    sheet.appendRow([
+      'Transacao_ID',
+      'Saldo_ID',
+      'Saldo_Contrario_ID',
+      'Devedor_ID',
+      'Credor_ID',
+      'Valor_Descontado',
+      'Data',
     ]);
   }
   return sheet;

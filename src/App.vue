@@ -17,6 +17,8 @@
     v-else-if="screen === 'split'"
     :user="loggedUser"
     :items="draftItems"
+    :users="householdUsers"
+    :categories="categories"
     :disabled="isRequesting"
     @toggle="togglePerson"
     @toggle-paid="togglePaidPerson"
@@ -32,15 +34,24 @@
     v-model:value="value"
     v-model:market="market"
     v-model:category="category"
+    :categories="categories"
     @back="backFromManual"
     @add="addManualItem"
   />
 
-  <MonthScreen v-else-if="screen === 'month'" :items="currentMonthItems" :current-date="currentDate" @back="screen = 'home'" />
+  <MonthScreen
+    v-else-if="screen === 'month'"
+    :items="currentMonthItems"
+    :categories="categories"
+    :users="householdUsers"
+    :current-date="currentDate"
+    @back="screen = 'home'"
+  />
 
   <HomeScreen
     v-else
     :user="loggedUser"
+    :users="householdUsers"
     :total="total"
     :balances="balances"
     :items="currentMonthItems"
@@ -54,11 +65,13 @@
     :show-notifications="showNotifications"
     :notification-items="notificationItems"
     :pay-loading-id="payLoadingId"
+    :balance-loading-id="balanceLoadingId"
     :confirm-loading-id="confirmLoadingId"
     :contest-loading-id="contestLoadingId"
     :dispute-error="disputeError"
-    :notification-error="contestNotificationError"
+    :notification-error="paymentNotificationError || contestNotificationError"
     @pay="payBalance"
+    @balance="balanceDebts"
     @confirm-payment="confirmPayment"
     @contest="requestContest"
     @resolve-contest="resolveContest"
@@ -86,26 +99,33 @@ import OcrScanner from './components/OcrScanner.vue';
 import QrScanner from './components/QrScanner.vue';
 import SplitScreen from './components/SplitScreen.vue';
 import {
-  classifyProduct,
+  clearApiToken,
+  createIdempotencyKey,
+  fetchCategories,
   formatCalendarDate,
+  getApiToken,
   isCurrentMonth,
   mapApiBalance,
   mapApiBalanceItem,
   mapApiDispute,
   mapApiItem,
+  mapApiPaymentRequest,
   normalizePhone,
   postApi,
+  setApiToken,
   requestApi,
 } from './lib/api';
 import { useNotifications } from './lib/notifications';
-import { initialItems } from './lib/users';
 
 const screen = ref('login');
 const loggedUser = ref(null);
 const phone = ref('');
 const birthday = ref('');
-const items = ref(initialItems);
+const items = ref([]);
+const householdUsers = ref([]);
+const categories = ref([]);
 const draftItems = ref([]);
+const draftSaveIdempotencyKey = ref('');
 const product = ref('');
 const value = ref('');
 const market = ref('');
@@ -118,6 +138,7 @@ const disputes = ref([]);
 const contestNotifications = ref([]);
 const disputeError = ref('');
 const contestNotificationError = ref('');
+const paymentNotificationError = ref('');
 const balanceItemsById = ref({});
 const balanceItemsLoadingId = ref('');
 const balanceItemsError = ref('');
@@ -126,6 +147,8 @@ const showNotifications = ref(false);
 const notificationItems = ref([]);
 const paymentNotifications = ref([]);
 const payLoadingId = ref('');
+const balanceLoadingId = ref('');
+const balanceOffsetKeys = ref({});
 const confirmLoadingId = ref('');
 const contestLoadingId = ref('');
 const modalMessage = ref('');
@@ -135,12 +158,16 @@ let notificationRefreshTimer;
 const currentDate = ref(new Date());
 const currentMonthItems = computed(() => items.value.filter((item) => isCurrentMonth(item.date, currentDate.value)));
 const total = computed(() => currentMonthItems.value.reduce((sum, item) => sum + item.value, 0));
+const defaultCategoryName = computed(
+  () => categories.value.find((item) => item.name === 'Outros')?.name || categories.value[0]?.name || '',
+);
 
 onMounted(() => {
+  if (getApiToken()) void restoreSession();
   notificationRefreshTimer = window.setInterval(() => {
     currentDate.value = new Date();
     if (!loggedUser.value || showNotifications.value) return;
-    void Promise.all([refreshPaymentNotifications(), refreshContestNotifications()]);
+    void refreshPendingNotifications();
   }, 30000);
 });
 
@@ -152,66 +179,57 @@ function showMessage(message) {
   modalMessage.value = message;
 }
 
+function toApiDate(value) {
+  const text = String(value ?? '').trim();
+  const isoDate = text.match(/^(\d{4}-\d{2}-\d{2})(?:$|T)/);
+  if (isoDate) return isoDate[1];
+  const brazilianDate = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (brazilianDate) return `${brazilianDate[3]}-${brazilianDate[2]}-${brazilianDate[1]}`;
+  throw new Error('A data da compra é inválida. Revise a data e tente novamente.');
+}
+
 function refreshNotifications() {
   notifications.refresh(loggedUser.value?.id, items.value);
 }
 
 async function openNotifications() {
-  await Promise.all([refreshPaymentNotifications(), refreshDisputes(), refreshContestNotifications()]);
-  notificationItems.value = [
-    ...notifications.unreadItems.value,
-    ...paymentNotifications.value,
-    ...contestNotifications.value,
-  ];
+  await Promise.all([refreshDisputes(), refreshPendingNotifications()]);
+  notificationItems.value = [...notifications.unreadItems.value, ...paymentNotifications.value, ...contestNotifications.value];
   showNotifications.value = true;
   notifications.markAllSeen(loggedUser.value.id, items.value);
 }
 
-async function refreshPaymentNotifications() {
+async function refreshPendingNotifications() {
   if (!loggedUser.value) return;
   try {
-    const data = await requestApi(`?action=paymentNotifications&userId=${encodeURIComponent(loggedUser.value.id)}`);
-    paymentNotifications.value = data.notifications || [];
-  } catch {
-    paymentNotifications.value = [];
+    const data = await requestApi('/notifications');
+    paymentNotifications.value = (data.paymentRequests || []).map(mapApiPaymentRequest);
+    contestNotifications.value = (data.disputes || []).map((item) => ({
+      ...mapApiDispute(item),
+      type: 'contest_request',
+    }));
+    paymentNotificationError.value = '';
+    contestNotificationError.value = '';
+  } catch (error) {
+    paymentNotificationError.value = error instanceof Error ? error.message : 'Não foi possível carregar as notificações de pagamento.';
+    contestNotificationError.value = error instanceof Error ? error.message : 'Não foi possível carregar as notificações de contestação.';
   }
 }
 
 async function refreshDisputes() {
   if (!loggedUser.value) return;
   try {
-    const data = await requestApi(`?action=disputes&userId=${encodeURIComponent(loggedUser.value.id)}`);
-    if (!Array.isArray(data.disputes)) {
-      throw new Error(data.message || data.error || 'Atualize o Apps Script para carregar as contestações.');
-    }
-    disputes.value = (data.disputes || []).map(mapApiDispute);
+    const data = await requestApi('/disputes');
+    if (!Array.isArray(data.disputes)) throw new Error('A API retornou uma lista de contestações inválida.');
+    disputes.value = data.disputes.map(mapApiDispute);
     disputeError.value = '';
   } catch (error) {
-    disputes.value = [];
     disputeError.value = error instanceof Error ? error.message : 'Não foi possível carregar as contestações.';
   }
 }
 
-async function refreshContestNotifications() {
-  if (!loggedUser.value) return;
-  try {
-    const data = await requestApi(`?action=contestNotifications&userId=${encodeURIComponent(loggedUser.value.id)}`);
-    if (!Array.isArray(data.notifications)) {
-      throw new Error(data.message || data.error || 'Atualize o Apps Script para carregar as notificações de contestação.');
-    }
-    contestNotifications.value = (data.notifications || []).map((item) => ({
-      ...mapApiDispute(item),
-      type: 'contest_request',
-    }));
-    contestNotificationError.value = '';
-  } catch (error) {
-    contestNotifications.value = [];
-    contestNotificationError.value = error instanceof Error ? error.message : 'Não foi possível carregar as notificações de contestação.';
-  }
-}
-
 async function refreshBalances() {
-  const balancesData = await requestApi('?action=balances');
+  const balancesData = await requestApi('/balances');
   balances.value = (balancesData.balances || []).map(mapApiBalance);
 }
 
@@ -222,20 +240,55 @@ async function loadBalanceItems(balance) {
   balanceItemsError.value = '';
   balanceItemsLoadingId.value = balanceId;
   try {
-    const data = await requestApi(
-      `?action=balanceItems&balanceId=${encodeURIComponent(balanceId)}&userId=${encodeURIComponent(loggedUser.value.id)}`,
-    );
+    const data = await requestApi(`/balances/${encodeURIComponent(balanceId)}/items`);
     if (!Array.isArray(data.items)) {
-      throw new Error(data.message || data.error || 'Atualize o Apps Script para carregar os itens do saldo.');
+      throw new Error('A API retornou uma lista de itens inválida.');
     }
     balanceItemsById.value = {
       ...balanceItemsById.value,
-      [balanceId]: data.items.map(mapApiBalanceItem),
+      [balanceId]: {
+        items: data.items.map(mapApiBalanceItem),
+        adjustments: (data.adjustments || []).map((adjustment) => ({
+          id: String(adjustment.id || ''),
+          value: Number(adjustment.amountCents != null ? adjustment.amountCents / 100 : adjustment.value) || 0,
+          date: String(adjustment.createdAt || adjustment.date || ''),
+        })),
+      },
     };
   } catch (error) {
     balanceItemsError.value = error instanceof Error ? error.message : 'Não foi possível carregar os itens do saldo.';
   } finally {
     balanceItemsLoadingId.value = '';
+  }
+}
+
+async function balanceDebts(balance) {
+  if (!loggedUser.value || isRequesting.value) return;
+  isRequesting.value = true;
+  balanceLoadingId.value = String(balance.id);
+  try {
+    const balanceId = String(balance.id);
+    const idempotencyKey = balanceOffsetKeys.value[balanceId] || (balanceOffsetKeys.value[balanceId] = createIdempotencyKey());
+    await postApi(`/balances/${encodeURIComponent(balanceId)}/offset`, {}, { idempotencyKey });
+    balanceItemsById.value = {};
+    await refreshBalances();
+    const updatedPair = balances.value.filter(
+      (entry) =>
+        String(entry.id) === String(balance.id) ||
+        (String(entry.debtorId) === String(balance.creditorId) && String(entry.creditorId) === String(balance.debtorId)),
+    );
+    for (const updatedBalance of updatedPair) {
+      await loadBalanceItems(updatedBalance);
+    }
+    const nextOffsetKeys = { ...balanceOffsetKeys.value };
+    delete nextOffsetKeys[balanceId];
+    balanceOffsetKeys.value = nextOffsetKeys;
+    showMessage('Contas balanceadas com sucesso.');
+  } catch (error) {
+    showMessage(error instanceof Error ? error.message : 'Não foi possível balancear as contas.');
+  } finally {
+    isRequesting.value = false;
+    balanceLoadingId.value = '';
   }
 }
 
@@ -246,36 +299,81 @@ async function login() {
   loadingLabel.value = 'Entrando na sua casa...';
   screen.value = 'loading';
   try {
-    const data = await requestApi(
-      `?action=login&phone=${encodeURIComponent(normalizePhone(phone.value))}&birthday=${encodeURIComponent(birthday.value.trim())}`,
-    );
-    if (!data.user) throw new Error('Usuário não encontrado.');
-    const user = { ...data.user, phone: normalizePhone(data.user.phone), birthday: String(data.user.birthday) };
-    loggedUser.value = user;
-
-    const itemsData = await requestApi('?action=items');
-    const loadedItems = (itemsData.items || []).map(mapApiItem);
-    items.value = loadedItems;
-    balanceItemsById.value = {};
-
-    try {
-      await refreshBalances();
-    } catch {
-      // Saldos são a fonte oficial: recalcular pelos itens recriaria dívidas já pagas.
-      balances.value = [];
+    if (!normalizePhone(phone.value) || !birthday.value.trim()) {
+      throw new Error('Informe seu telefone e sua data de aniversário.');
     }
-
-    await refreshPaymentNotifications();
-    await Promise.all([refreshDisputes(), refreshContestNotifications()]);
-    refreshNotifications();
-    screen.value = 'home';
+    const session = await postApi(
+      '/auth/login',
+      { phone: normalizePhone(phone.value), birthday: birthday.value.trim() },
+      { authenticated: false, idempotency: false },
+    );
+    setApiToken(session.accessToken);
+    if (!session.user?.id || !session.user?.name) throw new Error('A API retornou uma sessão incompleta.');
+    await initializeSession(session.user);
   } catch (error) {
+    clearApiToken();
+    loggedUser.value = null;
     screen.value = 'login';
     showMessage(error instanceof Error ? error.message : 'Verifique sua conexão e os dados.');
   } finally {
     isLoggingIn.value = false;
     isRequesting.value = false;
   }
+}
+
+async function restoreSession() {
+  isRequesting.value = true;
+  loadingLabel.value = 'Carregando sua casa...';
+  screen.value = 'loading';
+  try {
+    const session = await requestApi('/auth/me');
+    await initializeSession(session.user);
+  } catch (error) {
+    if (error?.status === 401) {
+      clearApiToken();
+      screen.value = 'login';
+    } else {
+      loggedUser.value = null;
+      screen.value = 'login';
+      showMessage(error instanceof Error ? error.message : 'Não foi possível restaurar a sessão.');
+    }
+  } finally {
+    isRequesting.value = false;
+  }
+}
+
+async function initializeSession(user) {
+  loggedUser.value = user;
+  const month = `${currentDate.value.getFullYear()}-${String(currentDate.value.getMonth() + 1).padStart(2, '0')}`;
+  const [loadedCategories, bootstrap, household] = await Promise.all([
+    fetchCategories(),
+    requestApi(`/bootstrap?month=${month}`),
+    requestApi('/household/users'),
+  ]);
+  if (!loadedCategories.length) throw new Error('Nenhuma categoria foi cadastrada no banco de dados.');
+  if (!Array.isArray(household.users) || !household.users.some((member) => String(member.id) === String(user.id))) {
+    throw new Error('A API não retornou os moradores da casa.');
+  }
+  categories.value = loadedCategories;
+  householdUsers.value = household.users.map((member) => ({ id: String(member.id), name: String(member.name) }));
+  await applyBootstrap(bootstrap, month);
+  balanceItemsById.value = {};
+  balanceOffsetKeys.value = {};
+  await Promise.all([refreshDisputes(), refreshPendingNotifications()]);
+  refreshNotifications();
+  screen.value = 'home';
+}
+
+async function applyBootstrap(bootstrap, month) {
+  const loadedItems = [...(bootstrap.items || [])];
+  let cursor = bootstrap.itemsNextCursor;
+  while (cursor) {
+    const page = await requestApi(`/items?month=${month}&cursor=${encodeURIComponent(cursor)}&limit=100`);
+    loadedItems.push(...(page.items || []));
+    cursor = page.nextCursor;
+  }
+  items.value = loadedItems.map(mapApiItem);
+  balances.value = (bootstrap.balances || []).map(mapApiBalance);
 }
 
 function startQrImport() {
@@ -294,12 +392,13 @@ async function readNf(qrCode) {
   loadingLabel.value = 'Lendo a NFC-e...';
   screen.value = 'loading';
   try {
-    const data = await postApi({ action: 'readNf', qrCode });
+    draftSaveIdempotencyKey.value = '';
+    const data = await postApi('/imports/nfce/qr', { qrCode }, { idempotency: false });
     const parsedItems = (data.items || [])
       .map((item, index) => ({
         id: `nf-${Date.now()}-${index}`,
         product: String(item.product ?? item.Produto ?? ''),
-        category: classifyProduct(String(item.product ?? item.Produto ?? '')),
+        category: defaultCategoryName.value,
         value: Number(item.value ?? item.Valor_Total ?? item.valor ?? 0),
         market: data.market || String(item.market ?? item.Mercado ?? 'NFC-e'),
         date: data.date || String(item.date ?? item.Data ?? formatCalendarDate()),
@@ -326,12 +425,20 @@ async function readNfImage({ imageBase64, mimeType }) {
   loadingLabel.value = 'Lendo a foto da nota...';
   screen.value = 'loading';
   try {
-    const data = await postApi({ action: 'readNfGemini', imageBase64, mimeType });
+    draftSaveIdempotencyKey.value = '';
+    const data = await postApi(
+      '/imports/receipt/ocr',
+      {
+        imageBase64,
+        mimeType,
+      },
+      { idempotency: false },
+    );
     const parsedItems = (data.items || [])
       .map((item, index) => ({
         id: `ocr-${Date.now()}-${index}`,
         product: String(item.product ?? item.Produto ?? ''),
-        category: classifyProduct(String(item.product ?? item.Produto ?? '')),
+        category: defaultCategoryName.value,
         value: Number(item.value ?? item.Valor_Total ?? item.valor ?? 0),
         market: data.market || String(item.market ?? item.Mercado ?? 'Compra por OCR'),
         date: data.date || String(item.date ?? item.Data ?? formatCalendarDate()),
@@ -353,50 +460,47 @@ async function readNfImage({ imageBase64, mimeType }) {
 }
 
 function togglePerson(itemId, userId) {
+  draftSaveIdempotencyKey.value = '';
   draftItems.value = draftItems.value.map((item) =>
     item.id !== itemId
       ? item
       : {
           ...item,
-          sharedWith: item.sharedWith.includes(userId)
-            ? item.sharedWith.filter((id) => id !== userId)
-            : [...item.sharedWith, userId],
-          paidWith: item.sharedWith.includes(userId)
-            ? item.paidWith.filter((id) => id !== userId)
-            : item.paidWith,
+          sharedWith: item.sharedWith.includes(userId) ? item.sharedWith.filter((id) => id !== userId) : [...item.sharedWith, userId],
+          paidWith: item.sharedWith.includes(userId) ? item.paidWith.filter((id) => id !== userId) : item.paidWith,
         },
   );
 }
 
 function togglePaidPerson(itemId, userId) {
+  draftSaveIdempotencyKey.value = '';
   draftItems.value = draftItems.value.map((item) => {
     if (item.id !== itemId || !item.sharedWith.includes(userId) || userId === item.buyerId) return item;
     return {
       ...item,
-      paidWith: item.paidWith.includes(userId)
-        ? item.paidWith.filter((id) => id !== userId)
-        : [...item.paidWith, userId],
+      paidWith: item.paidWith.includes(userId) ? item.paidWith.filter((id) => id !== userId) : [...item.paidWith, userId],
     };
   });
 }
 
 function updateDraftCategory(itemId, categoryName) {
-  draftItems.value = draftItems.value.map((item) =>
-    item.id === itemId ? { ...item, category: categoryName } : item,
-  );
+  draftSaveIdempotencyKey.value = '';
+  draftItems.value = draftItems.value.map((item) => (item.id === itemId ? { ...item, category: categoryName } : item));
 }
 
 function startManualItem() {
   draftItems.value = [];
-  category.value = '';
+  draftSaveIdempotencyKey.value = '';
+  category.value = defaultCategoryName.value;
   screen.value = 'manual';
 }
 
 function addAnotherManualItem() {
+  draftSaveIdempotencyKey.value = '';
   product.value = '';
   value.value = '';
   market.value = '';
-  category.value = '';
+  category.value = defaultCategoryName.value;
   screen.value = 'manual';
 }
 
@@ -416,20 +520,35 @@ async function saveDraft() {
   try {
     const itemsToSave = draftItems.value.map((item) => ({
       ...item,
-      category: item.category || classifyProduct(item.product),
+      category: item.category || defaultCategoryName.value,
     }));
-    await postApi({ action: 'saveItems', items: itemsToSave });
-    const nextItems = [...itemsToSave, ...items.value];
-    items.value = nextItems;
+    if (!draftSaveIdempotencyKey.value) draftSaveIdempotencyKey.value = createIdempotencyKey();
+    const payload = itemsToSave.map((item) => {
+      const valueCents = Math.round((Number(item.value) + Number.EPSILON) * 100);
+      if (!Number.isSafeInteger(valueCents) || valueCents <= 0) {
+        throw new Error(`O valor de "${item.product}" precisa ser positivo e válido.`);
+      }
+      return {
+        date: toApiDate(item.date),
+        market: item.market,
+        product: item.product,
+        category: item.category,
+        valueCents,
+        participantIds: item.sharedWith,
+        paidDirectlyBy: item.paidWith,
+      };
+    });
+    await postApi('/items/batch', { items: payload }, { idempotencyKey: draftSaveIdempotencyKey.value });
     balanceItemsById.value = {};
-    await refreshBalances();
+    await reloadDashboard();
     draftItems.value = [];
+    draftSaveIdempotencyKey.value = '';
     screen.value = 'home';
     refreshNotifications();
-    showMessage('Compra salva! Os itens foram enviados para a planilha.');
+    showMessage('Compra salva com sucesso.');
   } catch (error) {
     screen.value = 'split';
-    showMessage(error instanceof Error ? error.message : 'Verifique a conexão com a planilha.');
+    showMessage(error instanceof Error ? error.message : 'Não foi possível salvar a compra.');
   } finally {
     isRequesting.value = false;
   }
@@ -440,15 +559,9 @@ async function payBalance(balance) {
   isRequesting.value = true;
   payLoadingId.value = String(balance.id);
   try {
-    await postApi({
-      action: 'requestPayment',
-      balanceId: balance.id,
-      debtorId: balance.debtorId,
-      creditorId: balance.creditorId,
-      value: balance.value,
-    });
+    await postApi(`/balances/${encodeURIComponent(balance.id)}/payment-requests`, {}, { idempotencyKey: `payment-request:${balance.id}` });
     await refreshBalances();
-    await refreshPaymentNotifications();
+    await refreshPendingNotifications();
     showMessage('Pagamento informado. A outra pessoa precisa confirmar para quitar o saldo.');
   } catch (error) {
     showMessage(error instanceof Error ? error.message : 'Não foi possível informar o pagamento.');
@@ -463,12 +576,11 @@ async function confirmPayment(notification) {
   isRequesting.value = true;
   confirmLoadingId.value = String(notification.id);
   try {
-    await postApi({
-      action: 'confirmPayment',
-      notificationId: notification.id,
-      balanceId: notification.balanceId,
-      creditorId: loggedUser.value.id,
-    });
+    await postApi(
+      `/payment-requests/${encodeURIComponent(notification.id)}/confirm`,
+      {},
+      { idempotencyKey: `confirm-payment:${notification.id}` },
+    );
     await refreshBalances();
     paymentNotifications.value = paymentNotifications.value.filter((item) => item.id !== notification.id);
     notificationItems.value = notificationItems.value.filter((item) => item.id !== notification.id);
@@ -481,20 +593,17 @@ async function confirmPayment(notification) {
   }
 }
 
-async function requestContest({ balance, item, value }) {
+async function requestContest({ balance, item }) {
   if (!loggedUser.value || isRequesting.value) return;
   isRequesting.value = true;
   contestLoadingId.value = String(item.id);
   try {
-    await postApi({
-      action: 'requestContest',
-      balanceId: balance.id,
-      itemId: item.id,
-      debtorId: balance.debtorId,
-      creditorId: balance.creditorId,
-      value,
-    });
-    await Promise.all([refreshBalances(), refreshDisputes(), refreshContestNotifications()]);
+    await postApi(
+      `/balances/${encodeURIComponent(balance.id)}/disputes`,
+      { itemId: item.id },
+      { idempotencyKey: `dispute:${balance.id}:${item.id}` },
+    );
+    await Promise.all([refreshBalances(), refreshDisputes(), refreshPendingNotifications()]);
     notificationItems.value = [
       ...notificationItems.value.filter((notification) => notification.type !== 'contest_request'),
       ...contestNotifications.value,
@@ -513,17 +622,18 @@ async function resolveContest(notification, decision) {
   isRequesting.value = true;
   contestLoadingId.value = String(notification.id);
   try {
-    await postApi({
-      action: 'resolveContest',
-      notificationId: notification.id,
-      creditorId: loggedUser.value.id,
-      decision,
-    });
-    await Promise.all([refreshBalances(), refreshDisputes(), refreshContestNotifications()]);
+    await postApi(
+      `/disputes/${encodeURIComponent(notification.id)}/resolve`,
+      { decision },
+      { idempotencyKey: `resolve-dispute:${notification.id}:${decision}` },
+    );
+    await Promise.all([refreshBalances(), refreshDisputes(), refreshPendingNotifications()]);
     notificationItems.value = notificationItems.value.filter((item) => item.id !== notification.id);
-    showMessage(decision === 'accepted'
-      ? 'Contestação aceita. O valor foi removido do saldo devedor.'
-      : 'Contestação recusada. O valor continua no saldo devedor.');
+    showMessage(
+      decision === 'accepted'
+        ? 'Contestação aceita. O valor foi removido do saldo devedor.'
+        : 'Contestação recusada. O valor continua no saldo devedor.',
+    );
   } catch (error) {
     showMessage(error instanceof Error ? error.message : 'Não foi possível responder à contestação.');
   } finally {
@@ -534,7 +644,7 @@ async function resolveContest(notification, decision) {
 
 function addManualItem() {
   const parsedValue = Number(value.value.replace(',', '.'));
-  if (!product.value.trim() || !parsedValue || !loggedUser.value) {
+  if (!product.value.trim() || !Number.isFinite(parsedValue) || parsedValue <= 0 || !loggedUser.value) {
     showMessage('Informe o produto e um valor maior que zero.');
     return;
   }
@@ -543,7 +653,7 @@ function addManualItem() {
     {
       id: `manual-${Date.now()}-${draftItems.value.length}`,
       product: product.value.trim(),
-      category: category.value || classifyProduct(product.value),
+      category: category.value || defaultCategoryName.value,
       value: parsedValue,
       market: market.value.trim() || 'Compra manual',
       date: formatCalendarDate(),
@@ -552,6 +662,7 @@ function addManualItem() {
       paidWith: [],
     },
   ];
+  draftSaveIdempotencyKey.value = '';
   product.value = '';
   value.value = '';
   market.value = '';
@@ -559,9 +670,33 @@ function addManualItem() {
   screen.value = 'split';
 }
 
-function logout() {
-  loggedUser.value = null;
-  balanceItemsById.value = {};
-  screen.value = 'login';
+async function logout() {
+  let logoutError;
+  try {
+    if (getApiToken()) await postApi('/auth/logout', {}, { idempotency: false });
+  } catch (error) {
+    logoutError = error instanceof Error ? error.message : 'Não foi possível encerrar a sessão no servidor.';
+  } finally {
+    clearApiToken();
+    loggedUser.value = null;
+    householdUsers.value = [];
+    items.value = [];
+    balances.value = [];
+    disputes.value = [];
+    paymentNotifications.value = [];
+    contestNotifications.value = [];
+    balanceItemsById.value = {};
+    balanceOffsetKeys.value = {};
+    showNotifications.value = false;
+    screen.value = 'login';
+  }
+  if (logoutError) showMessage(`Sessão encerrada neste dispositivo, mas houve um erro ao revogá-la no servidor: ${logoutError}`);
+}
+
+async function reloadDashboard() {
+  const month = `${currentDate.value.getFullYear()}-${String(currentDate.value.getMonth() + 1).padStart(2, '0')}`;
+  const bootstrap = await requestApi(`/bootstrap?month=${month}`);
+  await applyBootstrap(bootstrap, month);
+  await Promise.all([refreshDisputes(), refreshPendingNotifications()]);
 }
 </script>

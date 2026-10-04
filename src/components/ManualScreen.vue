@@ -33,11 +33,10 @@
         @input="$emit('update:market', $event.target.value)"
       />
 
-      <label class="label">Grupo do item</label>
+      <label class="label">Categoria do item</label>
       <select class="input category-input" :value="category" @change="$emit('update:category', $event.target.value)">
-        <option value="">Detectar automaticamente</option>
-        <option v-for="group in productGroups" :key="group.name" :value="group.name">
-          {{ group.name }}
+        <option v-for="item in categories" :key="item.id" :value="item.name">
+          {{ item.name }}
         </option>
       </select>
 
@@ -50,13 +49,12 @@
 </template>
 
 <script setup>
-import { productGroups } from '../lib/api';
-
 defineProps({
   product: { type: String, default: '' },
   value: { type: String, default: '' },
   market: { type: String, default: '' },
   category: { type: String, default: '' },
+  categories: { type: Array, default: () => [] },
 });
 
 defineEmits(['update:product', 'update:value', 'update:market', 'update:category', 'back', 'add']);

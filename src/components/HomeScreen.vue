@@ -27,26 +27,16 @@
               ({{ money(item.value) }}).
             </p>
             <div class="contest-actions">
-              <button
-                class="confirm-payment-btn"
-                :disabled="disabled"
-                @click="$emit('resolve-contest', item, 'accepted')"
-              >
+              <button class="confirm-payment-btn" :disabled="disabled" @click="$emit('resolve-contest', item, 'accepted')">
                 {{ contestLoadingId === item.id ? 'Salvando...' : 'Aceitar contestação' }}
               </button>
-              <button
-                class="reject-contest-btn"
-                :disabled="disabled"
-                @click="$emit('resolve-contest', item, 'rejected')"
-              >
-                Recusar
-              </button>
+              <button class="reject-contest-btn" :disabled="disabled" @click="$emit('resolve-contest', item, 'rejected')">Recusar</button>
             </div>
           </template>
           <template v-else-if="item.type === 'payment_request'">
             <p>
-              <strong>{{ nameOf(item.debtorId) }}</strong> informou o pagamento de
-              <strong>{{ money(item.value) }}</strong>.
+              <strong>{{ nameOf(item.debtorId) }}</strong> informou o pagamento de <strong>{{ money(item.value) }}</strong
+              >.
             </p>
             <button class="confirm-payment-btn" :disabled="disabled" @click="$emit('confirm-payment', item)">
               <svg v-if="confirmLoadingId === item.id" class="button-spinner" viewBox="0 0 24 24" aria-label="Confirmando">
@@ -56,7 +46,9 @@
               <span v-else>Confirmar pagamento</span>
             </button>
           </template>
-          <p v-else>Você foi incluído em <strong>{{ item.product }}</strong></p>
+          <p v-else>
+            Você foi incluído em <strong>{{ item.product }}</strong>
+          </p>
         </div>
       </div>
 
@@ -86,14 +78,14 @@
         <button class="action-card action-card-dark" @click="$emit('qr')">
           <span class="action-icon">▣</span>
           <span>
-            <span class="action-title" style="display:block">Ler QR Code</span>
+            <span class="action-title" style="display: block">Ler QR Code</span>
             <span class="action-description">Importar pela NFC-e</span>
           </span>
         </button>
         <button class="action-card action-card-green" @click="$emit('manual')">
           <span class="action-icon">＋</span>
           <span>
-            <span class="action-title" style="display:block">Adicionar item</span>
+            <span class="action-title" style="display: block">Adicionar item</span>
             <span class="action-description">Sem nota eletrônica</span>
           </span>
         </button>
@@ -102,7 +94,7 @@
       <button class="ocr-row" @click="$emit('ocr')">
         <span class="ocr-icon">▤</span>
         <span>
-          <span class="ocr-title" style="display:block">Fotografar nota (OCR)</span>
+          <span class="ocr-title" style="display: block">Fotografar nota (OCR)</span>
           <span class="ocr-subtitle">Ler os produtos pela imagem</span>
         </span>
       </button>
@@ -115,12 +107,7 @@
       <div class="debt-card">
         <p v-if="balances.length === 0" class="empty-text">Nenhuma divisão registrada neste mês.</p>
         <template v-else>
-          <div
-            v-for="balance in balances"
-            :key="balance.id"
-            class="debt-row"
-            :style="isSettled(balance) ? { opacity: 0.55 } : {}"
-          >
+          <div v-for="balance in balances" :key="balance.id" class="debt-row" :style="isSettled(balance) ? { opacity: 0.55 } : {}">
             <button
               class="debt-details-button"
               :aria-expanded="expandedBalanceId === String(balance.id)"
@@ -134,6 +121,7 @@
                     Pago{{ balance.paidAt ? ` em ${formatPaidDate(balance.paidAt)}` : '' }}
                   </span>
                   <span v-else-if="isContested(balance)" class="debt-paid-note">Saldo removido após contestação aceita</span>
+                  <span v-else-if="isBalanced(balance)" class="debt-paid-note">Saldo quitado por balanceamento</span>
                   <span v-else-if="isAwaitingContest(balance)" class="debt-paid-note">Aguardando resposta à contestação</span>
                   <span v-else-if="isAwaitingConfirmation(balance)" class="debt-paid-note">
                     Aguardando confirmação de {{ nameOf(balance.creditorId) }}
@@ -144,6 +132,27 @@
                 </span>
               </span>
               <span class="debt-value">{{ money(balance.value) }}</span>
+            </button>
+            <button
+              v-if="canBalance(balance)"
+              class="balance-btn"
+              type="button"
+              :aria-label="`Balancear contas entre ${nameOf(balance.debtorId)} e ${nameOf(balance.creditorId)}`"
+              :disabled="disabled"
+              @click.stop="openBalancePrompt(balance)"
+            >
+              <svg
+                v-if="balanceLoadingId === String(balance.id)"
+                class="button-spinner"
+                viewBox="0 0 24 24"
+                aria-label="Balanceando contas"
+              >
+                <circle class="button-spinner-track" cx="12" cy="12" r="9" />
+                <circle class="button-spinner-path" cx="12" cy="12" r="9" />
+              </svg>
+              <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 3v17m0-17L3.5 6.5M7 3l3.5 3.5M17 21V4m0 17-3.5-3.5M17 21l3.5-3.5" />
+              </svg>
             </button>
             <button
               v-if="!isSettled(balance) && !isAwaitingConfirmation(balance) && !isAwaitingContest(balance)"
@@ -188,6 +197,13 @@
                   </button>
                 </div>
               </div>
+              <div v-for="adjustment in balanceAdjustmentsFor(balance)" :key="adjustment.id" class="balance-adjustment">
+                <span>
+                  Descontado por balanceamento
+                  <span v-if="adjustment.date"> • {{ formatPaidDate(adjustment.date) }}</span>
+                </span>
+                <strong>− {{ money(adjustment.value) }}</strong>
+              </div>
             </div>
           </div>
         </template>
@@ -204,19 +220,37 @@
         </div>
       </div>
     </div>
+    <div v-if="balancePromptId && balanceConfirmation" class="modal-backdrop" @click.self="balancePromptId = ''">
+      <section class="message-modal balance-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="balance-modal-title">
+        <button class="modal-close" type="button" aria-label="Fechar" @click="balancePromptId = ''">×</button>
+        <h2 id="balance-modal-title" class="modal-title">Você deseja balancear as contas?</h2>
+        <p class="modal-message">
+          {{ balanceConfirmation.firstAmount }} − {{ balanceConfirmation.secondAmount }} = {{ money(balanceConfirmation.discounted) }}
+        </p>
+        <p v-if="balanceConfirmation.remaining > 0" class="balance-confirm-result">
+          Depois do balanceamento, {{ nameOf(balanceConfirmation.remainingDebtorId) }} ainda deverá
+          {{ nameOf(balanceConfirmation.remainingCreditorId) }} {{ money(balanceConfirmation.remaining) }}.
+        </p>
+        <p v-else class="balance-confirm-result">As duas contas ficarão quitadas.</p>
+        <div class="balance-confirm-actions">
+          <button class="balance-cancel-btn" type="button" :disabled="disabled" @click="balancePromptId = ''">Cancelar</button>
+          <button class="balance-confirm-btn" type="button" :disabled="disabled" @click="confirmBalance">Confirmar balanceamento</button>
+        </div>
+      </section>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue';
 import { money, formatPaidDate, formatMonthName, formatTodayLabel } from '../lib/api';
-import { users } from '../lib/users';
 
 const props = defineProps({
   user: { type: Object, required: true },
   total: { type: Number, required: true },
   currentDate: { type: Date, default: () => new Date() },
   balances: { type: Array, default: () => [] },
+  users: { type: Array, default: () => [] },
   items: { type: Array, default: () => [] },
   disputes: { type: Array, default: () => [] },
   balanceItems: { type: Object, default: () => ({}) },
@@ -227,19 +261,56 @@ const props = defineProps({
   showNotifications: { type: Boolean, default: false },
   notificationItems: { type: Array, default: () => [] },
   payLoadingId: { type: String, default: '' },
+  balanceLoadingId: { type: String, default: '' },
   confirmLoadingId: { type: String, default: '' },
   contestLoadingId: { type: String, default: '' },
   disputeError: { type: String, default: '' },
   notificationError: { type: String, default: '' },
 });
 
-const emit = defineEmits(['pay', 'confirm-payment', 'contest', 'resolve-contest', 'details', 'qr', 'ocr', 'manual', 'month', 'logout', 'open-notifications']);
+const emit = defineEmits([
+  'pay',
+  'balance',
+  'confirm-payment',
+  'contest',
+  'resolve-contest',
+  'details',
+  'qr',
+  'ocr',
+  'manual',
+  'month',
+  'logout',
+  'open-notifications',
+]);
 
 const totalDisplay = computed(() => money(props.total));
 const todayLabel = computed(() => formatTodayLabel(props.currentDate));
 const monthName = computed(() => formatMonthName(props.currentDate));
 const monthAbbreviation = computed(() => formatMonthName(props.currentDate, 'short').replace('.', '').toLocaleUpperCase('pt-BR'));
 const expandedBalanceId = ref('');
+const balancePromptId = ref('');
+
+const balanceConfirmation = computed(() => {
+  const balance = props.balances.find((item) => String(item.id) === balancePromptId.value);
+  if (!balance) return null;
+  const counterpart = reciprocalBalance(balance);
+  if (!counterpart) return null;
+
+  const balanceCents = Math.round(Number(balance.value) * 100);
+  const counterpartCents = Math.round(Number(counterpart.value) * 100);
+  const discounted = Math.min(balanceCents, counterpartCents) / 100;
+  const remaining = Math.abs(balanceCents - counterpartCents) / 100;
+  const remainingBalance = balanceCents > counterpartCents ? balance : counterpart;
+
+  return {
+    firstAmount: money(Math.max(balanceCents, counterpartCents) / 100),
+    secondAmount: money(Math.min(balanceCents, counterpartCents) / 100),
+    discounted,
+    remaining,
+    remainingDebtorId: remainingBalance.debtorId,
+    remainingCreditorId: remainingBalance.creditorId,
+  };
+});
 
 function toggleBalanceDetails(balance) {
   const id = String(balance.id);
@@ -252,7 +323,7 @@ function toggleBalanceDetails(balance) {
 }
 
 function nameOf(userId) {
-  return users.find((candidate) => candidate.id === userId)?.name || 'Morador';
+  return props.users.find((candidate) => String(candidate.id) === String(userId))?.name || 'Morador';
 }
 
 function isPaid(balance) {
@@ -263,8 +334,12 @@ function isContested(balance) {
   return String(balance.status).trim().toLowerCase() === 'contestado';
 }
 
+function isBalanced(balance) {
+  return String(balance.status).trim().toLowerCase() === 'balanceado';
+}
+
 function isSettled(balance) {
-  return isPaid(balance) || isContested(balance);
+  return isPaid(balance) || isContested(balance) || isBalanced(balance);
 }
 
 function isAwaitingConfirmation(balance) {
@@ -276,7 +351,7 @@ function isAwaitingContest(balance) {
 }
 
 function balanceItemsFor(balance) {
-  return (props.balanceItems[String(balance.id)] || []).map((entry) => ({
+  return ((props.balanceItems[String(balance.id)] || {}).items || []).map((entry) => ({
     item: {
       id: String(entry.itemId),
       product: String(entry.product || ''),
@@ -284,17 +359,49 @@ function balanceItemsFor(balance) {
       date: String(entry.date || ''),
     },
     share: Number(entry.value) || 0,
-    dispute: props.disputes.find((dispute) =>
-      String(dispute.balanceId) === String(balance.id) &&
-      String(dispute.itemId) === String(entry.itemId),
+    dispute: props.disputes.find(
+      (dispute) => String(dispute.balanceId) === String(balance.id) && String(dispute.itemId) === String(entry.itemId),
     ),
   }));
 }
 
+function balanceAdjustmentsFor(balance) {
+  return (props.balanceItems[String(balance.id)] || {}).adjustments || [];
+}
+
+function reciprocalBalance(balance) {
+  return props.balances.find(
+    (candidate) =>
+      String(candidate.debtorId) === String(balance.creditorId) &&
+      String(candidate.creditorId) === String(balance.debtorId) &&
+      String(candidate.status).trim().toLowerCase() === 'pendente' &&
+      Number(candidate.value) > 0,
+  );
+}
+
+function canBalance(balance) {
+  return (
+    String(balance.status).trim().toLowerCase() === 'pendente' &&
+    Number(balance.value) > 0 &&
+    !isAwaitingConfirmation(balance) &&
+    !isAwaitingContest(balance) &&
+    Boolean(reciprocalBalance(balance))
+  );
+}
+
+function openBalancePrompt(balance) {
+  if (canBalance(balance)) balancePromptId.value = String(balance.id);
+}
+
+function confirmBalance() {
+  const balance = props.balances.find((item) => String(item.id) === balancePromptId.value);
+  if (!balance || !balanceConfirmation.value) return;
+  balancePromptId.value = '';
+  emit('balance', balance);
+}
+
 function canContest(balance, entry) {
-  return String(props.user.id) === String(balance.debtorId) &&
-    String(balance.status).toLowerCase() === 'pendente' &&
-    !entry.dispute;
+  return String(props.user.id) === String(balance.debtorId) && String(balance.status).toLowerCase() === 'pendente' && !entry.dispute;
 }
 
 function disputeStatusText(dispute) {

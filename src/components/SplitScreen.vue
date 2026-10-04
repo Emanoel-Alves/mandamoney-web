@@ -7,7 +7,9 @@
 
       <div class="buyer-notice">
         <span class="notice-icon">✓</span>
-        <p class="notice-text">Quem pagou: <span class="bold">{{ user.name }}</span></p>
+        <p class="notice-text">
+          Quem pagou: <span class="bold">{{ user.name }}</span>
+        </p>
       </div>
 
       <div v-for="item in items" :key="item.id" class="product-card">
@@ -17,13 +19,13 @@
             <p class="item-meta">{{ item.market }} • {{ item.date }}</p>
             <select
               class="category-select split-category-select"
-              :value="categoryFor(item)"
-              :aria-label="`Escolher grupo de ${item.product}`"
+              :value="categoryFor(item).name"
+              :aria-label="`Escolher categoria de ${item.product}`"
               :disabled="disabled"
               @change="$emit('category', item.id, $event.target.value)"
             >
-              <option v-for="group in productGroups" :key="group.name" :value="group.name">
-                {{ group.name }}
+              <option v-for="category in categories" :key="category.id" :value="category.name">
+                {{ category.name }}
               </option>
             </select>
           </div>
@@ -37,16 +39,14 @@
             :key="person.id"
             class="chip"
             :class="{ 'chip-selected': item.sharedWith.includes(person.id) }"
-            :disabled="disabled"
+            :disabled="disabled || String(person.id) === String(user.id)"
             @click="$emit('toggle', item.id, person.id)"
           >
             {{ person.name === user.name ? 'Você' : person.name }}
           </button>
         </div>
 
-        <p v-if="item.sharedWith.length > 0" class="split-hint">
-          {{ money(item.value / item.sharedWith.length) }} por pessoa
-        </p>
+        <p v-if="item.sharedWith.length > 0" class="split-hint">{{ money(item.value / item.sharedWith.length) }} por pessoa</p>
 
         <p class="participant-label paid-participant-label">JÁ PAGARAM DIRETAMENTE</p>
         <p class="paid-participant-hint">Marque quem já pagou a parte no caixa. Essa pessoa não ficará com saldo pendente.</p>
@@ -81,18 +81,23 @@
 </template>
 
 <script setup>
-import { classifyProduct, isProductGroup, money, productGroups } from '../lib/api';
-import { users } from '../lib/users';
-
-defineProps({
-  user: { type: Object, required: true },
-  items: { type: Array, default: () => [] },
-  disabled: { type: Boolean, default: false },
-});
+import { money } from '../lib/api';
 
 defineEmits(['toggle', 'toggle-paid', 'category', 'cancel', 'save', 'add-item']);
 
+const props = defineProps({
+  user: { type: Object, required: true },
+  items: { type: Array, default: () => [] },
+  users: { type: Array, default: () => [] },
+  categories: { type: Array, default: () => [] },
+  disabled: { type: Boolean, default: false },
+});
+
 function categoryFor(item) {
-  return isProductGroup(item.category) ? item.category : classifyProduct(item.product);
+  return (
+    props.categories.find((category) => category.name === item.category) ||
+    props.categories.find((category) => category.name === 'Outros') ||
+    props.categories[0] || { name: item.category || '', color: '#a99f92' }
+  );
 }
 </script>

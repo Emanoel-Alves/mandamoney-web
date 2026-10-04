@@ -24,15 +24,13 @@
       placeholder="DD/MM/AAAA"
       :value="birthday"
       @input="onBirthdayInput"
-      @keyup.enter="$emit('login')"
+      @keyup.enter="submit"
     />
 
-    <button class="btn-primary" :disabled="isLoggingIn" @click="$emit('login')">
-      <span class="btn-primary-text">{{ isLoggingIn ? 'Entrando...' : 'Entrar na minha casa' }}</span>
+    <button class="btn-primary" :disabled="isLoggingIn" @click="submit">
+      <span class="btn-primary-text">{{ isLoggingIn ? 'Aguarde...' : 'Entrar na minha casa' }}</span>
       <span class="btn-arrow">{{ isLoggingIn ? '…' : '→' }}</span>
     </button>
-
-    <p class="login-hint">Teste: 88999999999 • 01/01/2000</p>
   </div>
 </template>
 
@@ -49,5 +47,9 @@ const emit = defineEmits(['update:phone', 'update:birthday', 'login']);
 
 function onBirthdayInput(event) {
   emit('update:birthday', formatBirthday(event.target.value));
+}
+
+function submit() {
+  emit('login');
 }
 </script>
