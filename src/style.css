@@ -454,6 +454,7 @@ input {
 .ocr-icon { color: var(--dark); font-size: 22px; margin-right: 12px; }
 .ocr-title { color: var(--ink); font-weight: 800; font-size: 14px; }
 .ocr-subtitle { color: var(--muted); font-size: 11px; margin-top: 3px; }
+.shopping-list-link { margin-top: -18px; margin-bottom: 30px; }
 
 /* ---------- Saldos / listas ---------- */
 
@@ -720,6 +721,7 @@ input {
 .date-badge-month { color: var(--dark); font-size: 9px; font-weight: 800; }
 .month-info { flex: 1; min-width: 0; }
 .participant-summary { color: var(--dark); font-size: 11px; margin-top: 7px; font-weight: 700; }
+.category-hint { color: var(--muted); font-size: 11px; line-height: 1.4; margin-top: 7px; }
 
 .category-select {
   width: 100%;
@@ -738,6 +740,99 @@ input {
 }
 
 .category-input { appearance: auto; }
+
+.month-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  background: var(--white);
+  border-radius: 16px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.month-filter-control { min-width: 0; }
+.month-filter-control .participant-label { display: block; }
+.month-filter-select,
+.month-filter-input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 10px;
+  color: var(--ink);
+  background: var(--white);
+  font: inherit;
+  font-size: 13px;
+}
+
+.month-filter-count {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.shopping-list-form {
+  padding: 16px;
+  margin-bottom: 26px;
+  border-radius: 18px;
+  background: var(--white);
+}
+
+.shopping-list-form .label { margin-top: 0; }
+.shopping-list-form .btn-primary { margin-top: 14px; }
+
+.shopping-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.shopping-list-header .section-title { margin: 0; }
+.shopping-list-count {
+  min-width: 28px;
+  padding: 5px 9px;
+  border-radius: 14px;
+  background: var(--chip-bg);
+  color: var(--dark);
+  text-align: center;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.shopping-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 15px;
+  margin-bottom: 9px;
+  border-radius: 15px;
+  background: var(--white);
+}
+
+.shopping-list-item-copy { min-width: 0; }
+.shopping-list-item-copy .item-name { overflow-wrap: anywhere; }
+.shopping-list-done {
+  flex-shrink: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--dark);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.shopping-list-done:disabled { opacity: 0.55; }
+.shopping-list-error {
+  padding: 15px;
+  border-radius: 14px;
+  background: var(--white);
+  color: var(--ink);
+  font-size: 13px;
+}
 
 .month-chart {
   background: var(--white);

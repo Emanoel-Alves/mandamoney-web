@@ -103,7 +103,8 @@ export const requestApi = async (path, options = {}, { authenticated = true } = 
     if (!token) throw new ApiError('Sua sessão expirou. Entre novamente.', 401, 'UNAUTHORIZED');
     headers.set('Authorization', `Bearer ${token}`);
   }
-  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  const requestUrl = /^https?:\/\//i.test(path) ? path : `${API_BASE_URL}${path}`;
+  const response = await fetch(requestUrl, { ...options, headers });
   let data;
   try {
     data = await response.json();
@@ -146,6 +147,44 @@ export const postApi = (path, payload, { authenticated = true, idempotency = tru
   return requestApi(path, { method: 'POST', headers, body: JSON.stringify(payload) }, { authenticated });
 };
 
+export const checkApiReadiness = () =>
+  requestApi(new URL('/health/ready', API_BASE_URL).toString(), {}, { authenticated: false });
+
+export const fetchShoppingList = async () => {
+  const data = await requestApi('/shopping-list');
+  if (!Array.isArray(data.items)) throw new Error('A API retornou uma lista de compras inválida.');
+  return data.items.map((item) => {
+    const id = String(item.id ?? '');
+    const product = String(item.product ?? '').trim();
+    if (!id || !product) throw new Error('A API retornou um item inválido na lista de compras.');
+    return {
+      id,
+      product,
+      addedBy: String(item.addedBy ?? ''),
+      addedByName: String(item.addedByName ?? '').trim(),
+      createdAt: String(item.createdAt ?? ''),
+    };
+  });
+};
+
+export const addShoppingListItem = async (product) => {
+  const data = await postApi('/shopping-list', { product: String(product).trim() }, { idempotency: false });
+  const item = data.item;
+  if (!item?.id || !item?.product || !item?.addedBy) {
+    throw new Error('A API não confirmou o item adicionado à lista de compras.');
+  }
+  return {
+    id: String(item.id),
+    product: String(item.product),
+    addedBy: String(item.addedBy),
+    addedByName: String(item.addedByName ?? '').trim(),
+    createdAt: String(item.createdAt ?? ''),
+  };
+};
+
+export const removeShoppingListItem = (itemId) =>
+  requestApi(`/shopping-list/${encodeURIComponent(itemId)}`, { method: 'DELETE' });
+
 export const fetchCategories = async () => {
   const data = await requestApi('/categories', {}, { authenticated: false });
   if (!Array.isArray(data.categories)) throw new Error('A API retornou uma lista de categorias inválida.');
@@ -157,6 +196,64 @@ export const fetchCategories = async () => {
     }
     return { id: String(category.id), name, color };
   });
+};
+
+export const normalizeProductName = (value) =>
+  String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('pt-BR')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+
+export const fetchProductCategoryMappings = async (products) => {
+  const uniqueProducts = [...new Set(products.map((product) => String(product).trim()).filter(Boolean))];
+  const mappings = [];
+  for (let index = 0; index < uniqueProducts.length; index += 10) {
+    const query = new URLSearchParams();
+    uniqueProducts.slice(index, index + 10).forEach((product) => query.append('products', product));
+    const data = await requestApi(`/categories/product-mappings?${query}`);
+    if (!Array.isArray(data.mappings)) {
+      throw new Error('A API retornou uma lista de classificações de produtos inválida.');
+    }
+    mappings.push(...data.mappings.map((mapping) => {
+      const product = String(mapping.product ?? '').trim();
+      const normalizedProduct = String(mapping.normalizedProduct ?? '');
+      const categoryId = String(mapping.categoryId ?? '');
+      const categoryName = String(mapping.categoryName ?? '').trim();
+      if (
+        !product ||
+        !normalizedProduct ||
+        !categoryId ||
+        !categoryName ||
+        normalizeProductName(product) !== normalizedProduct
+      ) {
+        throw new Error('A API retornou uma classificação de produto inválida.');
+      }
+      return { product, normalizedProduct, categoryId, categoryName };
+    }));
+  }
+  return new Map(mappings.map((mapping) => [mapping.normalizedProduct, mapping]));
+};
+
+export const saveProductCategoryMapping = async (product, categoryId) => {
+  const data = await postApi(
+    '/categories/product-mappings',
+    { product: String(product).trim(), categoryId: String(categoryId) },
+    { idempotency: false },
+  );
+  const mapping = data.mapping;
+  if (
+    !mapping?.product ||
+    !mapping.normalizedProduct ||
+    !mapping.categoryId ||
+    !mapping.categoryName ||
+    normalizeProductName(mapping.product) !== mapping.normalizedProduct
+  ) {
+    throw new Error('A API não confirmou a classificação salva.');
+  }
+  return mapping;
 };
 
 export const parseParticipantIds = (value) => {
@@ -244,11 +341,12 @@ export const calculateBalances = (items) => {
     item.sharedWith
       .filter((id) => id !== item.buyerId && !item.paidWith?.includes(id))
       .forEach((debtorId) => {
-        const key = `${debtorId}-${item.buyerId}`;
+        const creditorId = item.buyerId;
+        const key = `${debtorId}-${creditorId}`;
         totals[key] = totals[key] || {
           id: key,
           debtorId,
-          creditorId: item.buyerId,
+          creditorId,
           value: 0,
           status: 'Pendente',
         };

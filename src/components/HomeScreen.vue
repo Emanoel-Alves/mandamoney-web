@@ -99,6 +99,14 @@
         </span>
       </button>
 
+      <button class="ocr-row shopping-list-link" @click="$emit('shopping-list')">
+        <span class="ocr-icon">🛒</span>
+        <span>
+          <span class="ocr-title" style="display: block">Lista de compras</span>
+          <span class="ocr-subtitle">Itens que estão faltando em casa</span>
+        </span>
+      </button>
+
       <div class="section-header">
         <p class="section-title">Saldos da casa</p>
         <button class="link" @click="$emit('month')">Ver compras do mês →</button>
@@ -155,7 +163,7 @@
               </svg>
             </button>
             <button
-              v-if="!isSettled(balance) && !isAwaitingConfirmation(balance) && !isAwaitingContest(balance)"
+              v-if="canRequestPayment(balance)"
               class="pay-btn"
               :disabled="disabled"
               @click="$emit('pay', balance)"
@@ -215,6 +223,7 @@
           <div>
             <p class="item-name">{{ item.product }}</p>
             <p class="item-meta">{{ item.market }} • {{ item.date }}</p>
+            <p class="item-meta">Comprado por {{ nameOf(item.buyerId) }}</p>
           </div>
           <p class="item-value">{{ money(item.value) }}</p>
         </div>
@@ -278,6 +287,7 @@ const emit = defineEmits([
   'qr',
   'ocr',
   'manual',
+  'shopping-list',
   'month',
   'logout',
   'open-notifications',
@@ -386,6 +396,16 @@ function canBalance(balance) {
     !isAwaitingConfirmation(balance) &&
     !isAwaitingContest(balance) &&
     Boolean(reciprocalBalance(balance))
+  );
+}
+
+function canRequestPayment(balance) {
+  return (
+    String(balance.debtorId) === String(props.user.id) &&
+    String(balance.status).trim().toLowerCase() === 'pendente' &&
+    Number(balance.value) > 0 &&
+    !isAwaitingConfirmation(balance) &&
+    !isAwaitingContest(balance)
   );
 }
 

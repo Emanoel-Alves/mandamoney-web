@@ -36,6 +36,7 @@
 
 <script setup>
 import { formatBirthday, formatPhone } from '../lib/api';
+import { onMounted } from 'vue';
 
 defineProps({
   phone: { type: String, default: '' },
@@ -43,7 +44,9 @@ defineProps({
   isLoggingIn: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(['update:phone', 'update:birthday', 'login']);
+const emit = defineEmits(['update:phone', 'update:birthday', 'login', 'wake-api']);
+
+onMounted(() => emit('wake-api'));
 
 function onBirthdayInput(event) {
   emit('update:birthday', formatBirthday(event.target.value));

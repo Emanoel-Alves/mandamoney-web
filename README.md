@@ -20,6 +20,11 @@ para rodar como um site estático no GitHub Pages.
 - **Backend**: usa a API Manda Money (`VITE_MANDAMONEY_API_URL`) para
   autenticação, categorias, compras, saldos, pagamentos, contestações e
   balanceamentos. A API pode encaminhar NFC-e e OCR aos provedores existentes.
+- **Lista de compras**: os moradores compartilham uma lista de itens que
+  faltam em casa, com identificação de quem adicionou e remoção ao comprar.
+- **Compras**: a listagem mensal pode ser filtrada por quem registrou a compra
+  ou pelo nome do produto. É possível retirar o comprador da divisão e marcar
+  quais participantes já pagaram diretamente a própria parte no caixa.
 
 ## Ambientes de produção e teste
 

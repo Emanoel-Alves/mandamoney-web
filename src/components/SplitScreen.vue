@@ -3,12 +3,12 @@
     <div class="page-content">
       <button class="back" @click="$emit('cancel')" :disabled="disabled">← Voltar</button>
       <h1 class="screen-title">Separe esta compra</h1>
-      <p class="screen-copy">Quem vai participar de cada item? O valor é dividido igualmente entre os selecionados.</p>
+      <p class="screen-copy">Marque quem participa da divisão. Quem já pagou a própria parte no caixa não ficará devendo.</p>
 
       <div class="buyer-notice">
         <span class="notice-icon">✓</span>
         <p class="notice-text">
-          Quem pagou: <span class="bold">{{ user.name }}</span>
+          A compra foi registrada por <span class="bold">{{ user.name }}</span>
         </p>
       </div>
 
@@ -17,12 +17,15 @@
           <div>
             <p class="item-name">{{ item.product }}</p>
             <p class="item-meta">{{ item.market }} • {{ item.date }}</p>
+            <p v-if="item.categoryMapped === false" class="category-hint">
+              Categoria não identificada. Escolha uma para salvar este produto e reutilizar nas próximas compras.
+            </p>
             <select
               class="category-select split-category-select"
               :value="categoryFor(item).name"
               :aria-label="`Escolher categoria de ${item.product}`"
               :disabled="disabled"
-              @change="$emit('category', item.id, $event.target.value)"
+              @change="$emit('category', item.product, $event.target.value)"
             >
               <option v-for="category in categories" :key="category.id" :value="category.name">
                 {{ category.name }}
@@ -39,7 +42,7 @@
             :key="person.id"
             class="chip"
             :class="{ 'chip-selected': item.sharedWith.includes(person.id) }"
-            :disabled="disabled || String(person.id) === String(user.id)"
+            :disabled="disabled"
             @click="$emit('toggle', item.id, person.id)"
           >
             {{ person.name === user.name ? 'Você' : person.name }}

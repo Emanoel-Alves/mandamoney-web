@@ -5,6 +5,7 @@
     v-model:birthday="birthday"
     :is-logging-in="isLoggingIn"
     @login="login"
+    @wake-api="wakeApi"
   />
 
   <LoadingScreen v-else-if="screen === 'loading'" :label="loadingLabel" />
@@ -45,7 +46,23 @@
     :categories="categories"
     :users="householdUsers"
     :current-date="currentDate"
+    :current-user-id="String(loggedUser.id)"
+    :disabled="isRequesting"
     @back="screen = 'home'"
+    @category="updateSavedItemCategory"
+  />
+
+  <ShoppingListScreen
+    v-else-if="screen === 'shopping-list'"
+    :items="shoppingListItems"
+    :users="householdUsers"
+    :loading="shoppingListLoading"
+    :disabled="isRequesting"
+    :error="shoppingListError"
+    @back="screen = 'home'"
+    @add="addShoppingItem"
+    @remove="removeShoppingItem"
+    @retry="refreshShoppingList"
   />
 
   <HomeScreen
@@ -79,6 +96,7 @@
     @qr="startQrImport"
     @ocr="startOcrImport"
     @manual="startManualItem"
+    @shopping-list="openShoppingList"
     @month="screen = 'month'"
     @logout="logout"
     @open-notifications="openNotifications"
@@ -98,10 +116,14 @@ import MonthScreen from './components/MonthScreen.vue';
 import OcrScanner from './components/OcrScanner.vue';
 import QrScanner from './components/QrScanner.vue';
 import SplitScreen from './components/SplitScreen.vue';
+import ShoppingListScreen from './components/ShoppingListScreen.vue';
 import {
+  addShoppingListItem,
+  checkApiReadiness,
   clearApiToken,
   createIdempotencyKey,
   fetchCategories,
+  fetchProductCategoryMappings,
   formatCalendarDate,
   getApiToken,
   isCurrentMonth,
@@ -110,8 +132,12 @@ import {
   mapApiDispute,
   mapApiItem,
   mapApiPaymentRequest,
+  normalizeProductName,
   normalizePhone,
   postApi,
+  saveProductCategoryMapping,
+  fetchShoppingList,
+  removeShoppingListItem,
   setApiToken,
   requestApi,
 } from './lib/api';
@@ -122,6 +148,9 @@ const loggedUser = ref(null);
 const phone = ref('');
 const birthday = ref('');
 const items = ref([]);
+const shoppingListItems = ref([]);
+const shoppingListLoading = ref(false);
+const shoppingListError = ref('');
 const householdUsers = ref([]);
 const categories = ref([]);
 const draftItems = ref([]);
@@ -177,6 +206,59 @@ onUnmounted(() => {
 
 function showMessage(message) {
   modalMessage.value = message;
+}
+
+async function wakeApi() {
+  try {
+    await checkApiReadiness();
+  } catch (error) {
+    console.warn('API readiness check failed while opening login:', error);
+  }
+}
+
+async function refreshShoppingList() {
+  shoppingListLoading.value = true;
+  shoppingListError.value = '';
+  try {
+    shoppingListItems.value = await fetchShoppingList();
+  } catch (error) {
+    shoppingListError.value =
+      error instanceof Error ? error.message : 'Não foi possível carregar a lista de compras.';
+  } finally {
+    shoppingListLoading.value = false;
+  }
+}
+
+async function openShoppingList() {
+  screen.value = 'shopping-list';
+  await refreshShoppingList();
+}
+
+async function addShoppingItem(productName, onSuccess) {
+  if (isRequesting.value) return;
+  isRequesting.value = true;
+  try {
+    const item = await addShoppingListItem(productName);
+    shoppingListItems.value = [item, ...shoppingListItems.value];
+    onSuccess?.();
+  } catch (error) {
+    showMessage(error instanceof Error ? error.message : 'Não foi possível adicionar o item.');
+  } finally {
+    isRequesting.value = false;
+  }
+}
+
+async function removeShoppingItem(itemId) {
+  if (isRequesting.value) return;
+  isRequesting.value = true;
+  try {
+    await removeShoppingListItem(itemId);
+    shoppingListItems.value = shoppingListItems.value.filter((item) => item.id !== itemId);
+  } catch (error) {
+    showMessage(error instanceof Error ? error.message : 'Não foi possível remover o item da lista.');
+  } finally {
+    isRequesting.value = false;
+  }
 }
 
 function toApiDate(value) {
@@ -372,7 +454,21 @@ async function applyBootstrap(bootstrap, month) {
     loadedItems.push(...(page.items || []));
     cursor = page.nextCursor;
   }
-  items.value = loadedItems.map(mapApiItem);
+  const mappedItems = loadedItems.map(mapApiItem);
+  const productMappings = await fetchProductCategoryMappings(
+    mappedItems.map((item) => item.product),
+  );
+  items.value = mappedItems.map((item) => ({
+    ...item,
+    categoryMapped:
+      Boolean(productMappings.get(normalizeProductName(item.product))) ||
+      Boolean(
+        item.category &&
+          normalizeProductName(item.category) !==
+            normalizeProductName(defaultCategoryName.value),
+      ),
+    category: productMappings.get(normalizeProductName(item.product))?.categoryName || item.category,
+  }));
   balances.value = (bootstrap.balances || []).map(mapApiBalance);
 }
 
@@ -393,12 +489,18 @@ async function readNf(qrCode) {
   screen.value = 'loading';
   try {
     draftSaveIdempotencyKey.value = '';
-    const data = await postApi('/imports/nfce/qr', { qrCode }, { idempotency: false });
+    const [data, loadedCategories] = await Promise.all([
+      postApi('/imports/nfce/qr', { qrCode }, { idempotency: false }),
+      fetchCategories(),
+    ]);
+    if (!loadedCategories.length) {
+      throw new Error('Nenhuma categoria foi cadastrada no banco de dados.');
+    }
+    categories.value = loadedCategories;
     const parsedItems = (data.items || [])
       .map((item, index) => ({
         id: `nf-${Date.now()}-${index}`,
         product: String(item.product ?? item.Produto ?? ''),
-        category: defaultCategoryName.value,
         value: Number(item.value ?? item.Valor_Total ?? item.valor ?? 0),
         market: data.market || String(item.market ?? item.Mercado ?? 'NFC-e'),
         date: data.date || String(item.date ?? item.Data ?? formatCalendarDate()),
@@ -409,7 +511,17 @@ async function readNf(qrCode) {
       .filter((item) => item.product && item.value > 0);
 
     if (!parsedItems.length) throw new Error('A NFC-e não retornou produtos.');
-    draftItems.value = parsedItems;
+    const productMappings = await fetchProductCategoryMappings(
+      parsedItems.map((item) => item.product),
+    );
+    draftItems.value = parsedItems.map((item) => {
+      const mapping = productMappings.get(normalizeProductName(item.product));
+      return {
+        ...item,
+        category: mapping?.categoryName || defaultCategoryName.value,
+        categoryMapped: Boolean(mapping),
+      };
+    });
     screen.value = 'split';
   } catch (error) {
     screen.value = 'home';
@@ -426,19 +538,25 @@ async function readNfImage({ imageBase64, mimeType }) {
   screen.value = 'loading';
   try {
     draftSaveIdempotencyKey.value = '';
-    const data = await postApi(
-      '/imports/receipt/ocr',
-      {
-        imageBase64,
-        mimeType,
-      },
-      { idempotency: false },
-    );
+    const [data, loadedCategories] = await Promise.all([
+      postApi(
+        '/imports/receipt/ocr',
+        {
+          imageBase64,
+          mimeType,
+        },
+        { idempotency: false },
+      ),
+      fetchCategories(),
+    ]);
+    if (!loadedCategories.length) {
+      throw new Error('Nenhuma categoria foi cadastrada no banco de dados.');
+    }
+    categories.value = loadedCategories;
     const parsedItems = (data.items || [])
       .map((item, index) => ({
         id: `ocr-${Date.now()}-${index}`,
         product: String(item.product ?? item.Produto ?? ''),
-        category: defaultCategoryName.value,
         value: Number(item.value ?? item.Valor_Total ?? item.valor ?? 0),
         market: data.market || String(item.market ?? item.Mercado ?? 'Compra por OCR'),
         date: data.date || String(item.date ?? item.Data ?? formatCalendarDate()),
@@ -449,7 +567,17 @@ async function readNfImage({ imageBase64, mimeType }) {
       .filter((item) => item.product && item.value > 0);
 
     if (!parsedItems.length) throw new Error('O OCR não encontrou produtos. Confira a foto e tente novamente.');
-    draftItems.value = parsedItems;
+    const productMappings = await fetchProductCategoryMappings(
+      parsedItems.map((item) => item.product),
+    );
+    draftItems.value = parsedItems.map((item) => {
+      const mapping = productMappings.get(normalizeProductName(item.product));
+      return {
+        ...item,
+        category: mapping?.categoryName || defaultCategoryName.value,
+        categoryMapped: Boolean(mapping),
+      };
+    });
     screen.value = 'split';
   } catch (error) {
     screen.value = 'home';
@@ -483,9 +611,54 @@ function togglePaidPerson(itemId, userId) {
   });
 }
 
-function updateDraftCategory(itemId, categoryName) {
+async function updateDraftCategory(productName, categoryName) {
+  await persistSelectedProductCategory(productName, categoryName);
+}
+
+async function updateSavedItemCategory(productName, categoryName) {
+  await persistSelectedProductCategory(productName, categoryName);
+}
+
+async function persistSelectedProductCategory(productName, categoryName) {
+  if (isRequesting.value) return;
+  const selectedCategory = categories.value.find(
+    (item) => item.name === categoryName,
+  );
+  if (!selectedCategory) {
+    showMessage('A categoria selecionada não está disponível.');
+    return;
+  }
+  isRequesting.value = true;
+  try {
+    const mapping = await saveProductCategoryMapping(
+      productName,
+      selectedCategory.id,
+    );
+    applyProductCategoryMapping(mapping);
+  } catch (error) {
+    showMessage(
+      error instanceof Error
+        ? error.message
+        : 'Não foi possível salvar a categoria deste produto.',
+    );
+  } finally {
+    isRequesting.value = false;
+  }
+}
+
+function applyProductCategoryMapping(mapping) {
+  const normalizedProduct = mapping.normalizedProduct;
   draftSaveIdempotencyKey.value = '';
-  draftItems.value = draftItems.value.map((item) => (item.id === itemId ? { ...item, category: categoryName } : item));
+  draftItems.value = draftItems.value.map((item) =>
+    normalizeProductName(item.product) === normalizedProduct
+      ? { ...item, category: mapping.categoryName, categoryMapped: true }
+      : item,
+  );
+  items.value = items.value.map((item) =>
+    normalizeProductName(item.product) === normalizedProduct
+      ? { ...item, category: mapping.categoryName, categoryMapped: true }
+      : item,
+  );
 }
 
 function startManualItem() {
@@ -556,6 +729,10 @@ async function saveDraft() {
 
 async function payBalance(balance) {
   if (isRequesting.value) return;
+  if (String(balance.debtorId) !== String(loggedUser.value?.id)) {
+    showMessage('Somente quem está devendo pode solicitar a quitação desta conta. Atualize os saldos e confira a conta conectada.');
+    return;
+  }
   isRequesting.value = true;
   payLoadingId.value = String(balance.id);
   try {
@@ -681,6 +858,7 @@ async function logout() {
     loggedUser.value = null;
     householdUsers.value = [];
     items.value = [];
+    shoppingListItems.value = [];
     balances.value = [];
     disputes.value = [];
     paymentNotifications.value = [];

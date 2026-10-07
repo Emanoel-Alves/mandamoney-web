@@ -28,20 +28,43 @@
         <p v-else class="empty-text">Nenhum valor comprado neste mês.</p>
       </section>
 
-      <div v-for="item in items" :key="item.id" class="month-row">
+      <section class="month-filters" aria-label="Filtros das compras">
+        <label class="month-filter-control">
+          <span class="participant-label">COMPRAS DE</span>
+          <select v-model="buyerFilter" class="month-filter-select">
+            <option value="all">Todas as pessoas</option>
+            <option value="mine">Compradas por mim</option>
+            <option value="others">Compradas por outra pessoa</option>
+          </select>
+        </label>
+        <label class="month-filter-control">
+          <span class="participant-label">PRODUTO</span>
+          <input v-model="productSearch" class="month-filter-input" type="search" placeholder="Buscar produto" />
+        </label>
+        <p class="month-filter-count">{{ filteredItems.length }} de {{ items.length }} itens</p>
+      </section>
+
+      <div v-for="item in filteredItems" :key="item.id" class="month-row">
         <div class="date-badge">
           <span class="date-badge-day">{{ item.date.slice(0, 2) }}</span>
           <span class="date-badge-month">{{ monthAbbreviation }}</span>
         </div>
         <div class="month-info">
           <p class="item-name">{{ item.product }}</p>
-          <p class="item-meta">{{ item.market }} • pago por {{ nameOf(item.buyerId) }}</p>
+          <p class="item-meta">{{ item.market }} • comprado por {{ nameOf(item.buyerId) }}</p>
           <p class="participant-summary">Dividido com {{ item.sharedWith.map(nameOf).join(', ') }}</p>
+          <p v-if="item.paidWith.length" class="participant-summary">
+            Pago diretamente por {{ item.paidWith.map(nameOf).join(', ') }}
+          </p>
+          <p v-if="item.categoryMapped === false" class="category-hint">
+            Categoria não identificada. Escolha uma para salvar este produto nas próximas compras.
+          </p>
           <select
             class="category-select"
             :value="categoryFor(item).name"
             :aria-label="`Escolher categoria de ${item.product}`"
-            @change="changeCategory(item.id, $event.target.value)"
+            :disabled="disabled"
+            @change="$emit('category', item.product, $event.target.value)"
           >
             <option v-for="category in categories" :key="category.id" :value="category.name">
               {{ category.name }}
@@ -50,6 +73,7 @@
         </div>
         <p class="item-value">{{ money(item.value) }}</p>
       </div>
+      <p v-if="filteredItems.length === 0" class="empty-text">Nenhuma compra corresponde aos filtros.</p>
     </div>
   </div>
 </template>
@@ -63,13 +87,37 @@ const props = defineProps({
   categories: { type: Array, default: () => [] },
   users: { type: Array, default: () => [] },
   currentDate: { type: Date, default: () => new Date() },
+  disabled: { type: Boolean, default: false },
+  currentUserId: { type: String, default: '' },
 });
 
-defineEmits(['back']);
+defineEmits(['back', 'category']);
 
-const categoryOverrides = ref(loadCategoryOverrides());
 const monthName = computed(() => formatMonthName(props.currentDate));
 const monthAbbreviation = computed(() => formatMonthName(props.currentDate, 'short').replace('.', '').toLocaleUpperCase('pt-BR'));
+const buyerFilter = ref('all');
+const productSearch = ref('');
+
+const filteredItems = computed(() => {
+  const query = normalizeSearch(productSearch.value);
+  return props.items.filter((item) => {
+    const isMine = String(item.buyerId) === String(props.currentUserId);
+    const matchesBuyer =
+      buyerFilter.value === 'all' ||
+      (buyerFilter.value === 'mine' && isMine) ||
+      (buyerFilter.value === 'others' && !isMine);
+    const matchesProduct = !query || normalizeSearch(item.product).includes(query);
+    return matchesBuyer && matchesProduct;
+  });
+
+  function normalizeSearch(value) {
+    return String(value ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLocaleLowerCase('pt-BR')
+      .trim();
+  }
+});
 
 const categoryTotals = computed(() => {
   const totals = props.categories.map((category) => ({
@@ -89,7 +137,7 @@ const categoryTotals = computed(() => {
 });
 
 function categoryFor(item) {
-  const savedCategory = categoryOverrides.value[item.id] || item.category;
+  const savedCategory = item.category;
   return (
     props.categories.find((category) => category.name === savedCategory) ||
     props.categories.find((category) => category.name === 'Outros') ||
@@ -99,22 +147,6 @@ function categoryFor(item) {
       color: '#a99f92',
     }
   );
-}
-
-function changeCategory(itemId, categoryName) {
-  categoryOverrides.value = {
-    ...categoryOverrides.value,
-    [itemId]: categoryName,
-  };
-  localStorage.setItem('mandamoney-category-overrides', JSON.stringify(categoryOverrides.value));
-}
-
-function loadCategoryOverrides() {
-  try {
-    return JSON.parse(localStorage.getItem('mandamoney-category-overrides') || '{}');
-  } catch {
-    return {};
-  }
 }
 
 const categoryTotal = computed(() => categoryTotals.value.reduce((sum, category) => sum + category.value, 0));
