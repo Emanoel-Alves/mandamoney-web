@@ -275,9 +275,16 @@ export const mapApiItem = (item) => {
     value: Number(item.valueCents != null ? item.valueCents / 100 : (item.value ?? item.Valor_Total ?? 0)),
     market: String(item.market ?? item.Mercado ?? ''),
     date: formatPurchaseDate(item.date ?? item.Data ?? ''),
+    receiptUrl: String(item.receiptUrl ?? item.receiptLink ?? ''),
     buyerId: String(item.buyerId ?? item.Comprador_ID ?? item.Comprador ?? ''),
     sharedWith: parseParticipantIds(item.participantIds ?? item.sharedWith ?? item.Pertence_A),
     paidWith: parseParticipantIds(item.paidDirectlyBy ?? item.paidWith ?? item.Pago_Direto_Por),
+    cashContributions: Array.isArray(item.cashContributions)
+      ? item.cashContributions.map((contribution) => ({
+          userId: String(contribution.userId ?? ''),
+          amountCents: Number(contribution.amountCents) || 0,
+        }))
+      : [],
   };
 };
 
@@ -322,6 +329,11 @@ export const mapApiBalanceItem = (item) => ({
   product: String(item.product ?? item.Produto ?? ''),
   market: String(item.market ?? item.Mercado ?? ''),
   date: formatPurchaseDate(item.date ?? item.Data ?? ''),
+  isPaid:
+    item.isPaid === true ||
+    item.paid === true ||
+    item.settled === true ||
+    ['paid', 'pago', 'settled', 'quitado'].includes(String(item.status ?? '').trim().toLowerCase()),
 });
 
 export const mapApiPaymentRequest = (request) => ({

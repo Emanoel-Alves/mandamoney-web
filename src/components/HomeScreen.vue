@@ -107,6 +107,14 @@
         </span>
       </button>
 
+      <button class="ocr-row" @click="$emit('catalog')">
+        <span class="ocr-icon">▦</span>
+        <span>
+          <span class="ocr-title" style="display: block">Produtos por categoria</span>
+          <span class="ocr-subtitle">Cadastrar nomes para usar nas compras</span>
+        </span>
+      </button>
+
       <div class="section-header">
         <p class="section-title">Saldos da casa</p>
         <button class="link" @click="$emit('month')">Ver compras do mês →</button>
@@ -185,7 +193,12 @@
               <p v-else-if="balanceItemsFor(balance).length === 0" class="empty-text">
                 Não foram encontrados itens associados a este saldo.
               </p>
-              <div v-for="entry in balanceItemsFor(balance)" :key="entry.item.id" class="balance-item">
+              <div
+                v-for="entry in balanceItemsFor(balance)"
+                :key="entry.item.id"
+                class="balance-item"
+                :class="{ 'balance-item-settled': entry.settled }"
+              >
                 <div class="balance-item-info">
                   <p class="item-name">{{ entry.item.product }}</p>
                   <p class="item-meta">{{ entry.item.market }} • {{ entry.item.date }}</p>
@@ -225,7 +238,23 @@
             <p class="item-meta">{{ item.market }} • {{ item.date }}</p>
             <p class="item-meta">Comprado por {{ nameOf(item.buyerId) }}</p>
           </div>
-          <p class="item-value">{{ money(item.value) }}</p>
+          <div class="recent-item-actions">
+            <a
+              v-if="item.receiptUrl"
+              class="receipt-icon-button"
+              :href="item.receiptUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              :aria-label="`Abrir nota fiscal de ${item.product}`"
+              :title="`Abrir nota fiscal de ${item.product}`"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z" />
+                <path d="M9 8h6M9 12h6M9 16h3" />
+              </svg>
+            </a>
+            <p class="item-value">{{ money(item.value) }}</p>
+          </div>
         </div>
       </div>
     </div>
@@ -288,6 +317,7 @@ const emit = defineEmits([
   'ocr',
   'manual',
   'shopping-list',
+  'catalog',
   'month',
   'logout',
   'open-notifications',
@@ -361,18 +391,59 @@ function isAwaitingContest(balance) {
 }
 
 function balanceItemsFor(balance) {
-  return ((props.balanceItems[String(balance.id)] || {}).items || []).map((entry) => ({
-    item: {
-      id: String(entry.itemId),
-      product: String(entry.product || ''),
-      market: String(entry.market || ''),
-      date: String(entry.date || ''),
-    },
-    share: Number(entry.value) || 0,
-    dispute: props.disputes.find(
-      (dispute) => String(dispute.balanceId) === String(balance.id) && String(dispute.itemId) === String(entry.itemId),
-    ),
-  }));
+  const details = props.balanceItems[String(balance.id)] || {};
+  const entries = (details.items || [])
+    .map((entry) => ({
+      item: {
+        id: String(entry.itemId),
+        product: String(entry.product || ''),
+        market: String(entry.market || ''),
+        date: String(entry.date || ''),
+      },
+      share: Number(entry.value) || 0,
+      alreadyPaid: Boolean(entry.isPaid),
+      dispute: props.disputes.find(
+        (dispute) =>
+          String(dispute.balanceId) === String(balance.id) &&
+          String(dispute.itemId) === String(entry.itemId),
+      ),
+    }))
+    .sort((left, right) => comparePurchaseDates(left.item.date, right.item.date) || left.item.id.localeCompare(right.item.id));
+
+  const settledBalance = ['pago', 'balanceado'].includes(String(balance.status).trim().toLowerCase());
+  const offsetCents = Math.round(
+    (details.adjustments || []).reduce((total, adjustment) => total + (Number(adjustment.value) || 0), 0) * 100,
+  );
+  let allocatedCents = 0;
+  let offsetCovered = offsetCents > 0;
+
+  return entries.map((entry) => {
+    const shareCents = Math.round(entry.share * 100);
+    const disputedAndRemoved = String(entry.dispute?.status || '').toLowerCase() === 'aceita';
+    const coveredByOffset = !disputedAndRemoved && offsetCovered && allocatedCents + shareCents <= offsetCents;
+    if (offsetCovered && !disputedAndRemoved) {
+      if (coveredByOffset) {
+        allocatedCents += shareCents;
+      } else {
+        offsetCovered = false;
+      }
+    }
+    return {
+      ...entry,
+      settled: !disputedAndRemoved && (entry.alreadyPaid || settledBalance || coveredByOffset),
+    };
+  });
+}
+
+function comparePurchaseDates(left, right) {
+  const timestamp = (value) => {
+    const text = String(value || '').trim();
+    const brazilian = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    const normalized = brazilian ? `${brazilian[3]}-${brazilian[2]}-${brazilian[1]}` : text;
+    const parsed = Date.parse(normalized);
+    return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed;
+  };
+  return timestamp(left) - timestamp(right);
 }
 
 function balanceAdjustmentsFor(balance) {

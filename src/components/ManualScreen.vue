@@ -33,12 +33,22 @@
         @input="$emit('update:market', $event.target.value)"
       />
 
-      <label class="label">Categoria do item</label>
-      <select class="input category-input" :value="category" @change="$emit('update:category', $event.target.value)">
-        <option v-for="item in categories" :key="item.id" :value="item.name">
-          {{ item.name }}
-        </option>
-      </select>
+      <label class="label" for="manual-date">Data da compra</label>
+      <CalendarPicker
+        id="manual-date"
+        :model-value="date"
+        @update:model-value="$emit('update:date', $event)"
+      />
+
+      <label class="label" for="manual-category">Categoria do item</label>
+      <AppSelect
+        id="manual-category"
+        class="category-input"
+        :model-value="category"
+        aria-label="Categoria do item"
+        :options="categoryOptions"
+        @update:model-value="$emit('update:category', $event)"
+      />
 
       <button class="btn-primary" @click="$emit('add')">
         <span class="btn-primary-text">Continuar para dividir</span>
@@ -49,13 +59,20 @@
 </template>
 
 <script setup>
-defineProps({
+import { computed } from 'vue';
+import CalendarPicker from './CalendarPicker.vue';
+import AppSelect from './AppSelect.vue';
+
+const props = defineProps({
   product: { type: String, default: '' },
   value: { type: String, default: '' },
   market: { type: String, default: '' },
+  date: { type: String, default: '' },
   category: { type: String, default: '' },
   categories: { type: Array, default: () => [] },
 });
 
-defineEmits(['update:product', 'update:value', 'update:market', 'update:category', 'back', 'add']);
+const categoryOptions = computed(() => props.categories.map((item) => ({ value: item.name, label: item.name })));
+
+defineEmits(['update:product', 'update:value', 'update:market', 'update:date', 'update:category', 'back', 'add']);
 </script>

@@ -25,6 +25,23 @@ para rodar como um site estático no GitHub Pages.
 - **Compras**: a listagem mensal pode ser filtrada por quem registrou a compra
   ou pelo nome do produto. É possível retirar o comprador da divisão e marcar
   quais participantes já pagaram diretamente a própria parte no caixa.
+- **Revisão de notas**: os itens importados por QR Code e OCR podem ter nome,
+  valor e data corrigidos ou ser removidos antes de salvar a divisão. Compras
+  manuais também permitem selecionar a data; sem alteração, usam o dia atual.
+- **Categorias de produtos**: NFC-e, OCR e cadastro manual reutilizam primeiro
+  o mapeamento já salvo para o produto. Para nomes conhecidos sem mapeamento,
+  o app sugere uma categoria pelo nome (por exemplo, morango em "Frutas e
+  Legumes"); a sugestão pode ser revisada antes de salvar. Produtos não
+  reconhecidos ficam na categoria padrão até a escolha manual.
+- **Produtos**: a tela "Produtos por categoria" cadastra a classificação de
+  um nome usando as categorias fornecidas pela API e exibe os produtos
+  encontrados nas compras carregadas.
+- **Ícone**: a aba do navegador usa uma versão estática do mascote da tela de
+  carregamento.
+
+Renomear/criar categorias globalmente, alterar participantes de um item já
+salvo e persistir o link/código da nota exigem suporte de escrita no backend;
+o frontend atual não dispõe desses contratos.
 
 ## Ambientes de produção e teste
 

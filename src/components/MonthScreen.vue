@@ -5,6 +5,18 @@
       <h1 class="screen-title">Compras de {{ monthName }} de {{ currentDate.getFullYear() }}</h1>
       <p class="screen-copy">{{ items.length }} itens registrados neste mês.</p>
 
+      <section class="month-filters month-period-filter" aria-label="Selecionar mês das compras">
+        <label class="month-filter-control">
+          <span class="participant-label">MÊS</span>
+          <CalendarPicker
+            mode="month"
+            aria-label="Selecionar mês das compras"
+            :model-value="selectedMonth"
+            @update:model-value="$emit('month-change', $event)"
+          />
+        </label>
+      </section>
+
       <section class="month-chart" aria-labelledby="month-chart-title">
         <div class="month-chart-header">
           <div>
@@ -28,15 +40,19 @@
         <p v-else class="empty-text">Nenhum valor comprado neste mês.</p>
       </section>
 
+      <p v-if="loading" class="empty-text">Carregando compras do mês...</p>
+      <p v-else-if="error" class="month-view-error">{{ error }}</p>
+
       <section class="month-filters" aria-label="Filtros das compras">
-        <label class="month-filter-control">
+        <div class="month-filter-control">
           <span class="participant-label">COMPRAS DE</span>
-          <select v-model="buyerFilter" class="month-filter-select">
-            <option value="all">Todas as pessoas</option>
-            <option value="mine">Compradas por mim</option>
-            <option value="others">Compradas por outra pessoa</option>
-          </select>
-        </label>
+          <AppSelect
+            v-model="buyerFilter"
+            class="month-filter-select"
+            :aria-label="'Filtrar compras por pessoa'"
+            :options="buyerFilterOptions"
+          />
+        </div>
         <label class="month-filter-control">
           <span class="participant-label">PRODUTO</span>
           <input v-model="productSearch" class="month-filter-input" type="search" placeholder="Buscar produto" />
@@ -59,21 +75,34 @@
           <p v-if="item.categoryMapped === false" class="category-hint">
             Categoria não identificada. Escolha uma para salvar este produto nas próximas compras.
           </p>
-          <select
+          <AppSelect
             class="category-select"
-            :value="categoryFor(item).name"
+            :model-value="categoryFor(item).name"
             :aria-label="`Escolher categoria de ${item.product}`"
             :disabled="disabled"
-            @change="$emit('category', item.product, $event.target.value)"
-          >
-            <option v-for="category in categories" :key="category.id" :value="category.name">
-              {{ category.name }}
-            </option>
-          </select>
+            :options="categoryOptions"
+            @update:model-value="$emit('category', item.product, $event)"
+          />
         </div>
-        <p class="item-value">{{ money(item.value) }}</p>
+        <div class="month-item-actions">
+          <a
+            v-if="item.receiptUrl"
+            class="receipt-icon-button"
+            :href="item.receiptUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            :aria-label="`Abrir nota fiscal de ${item.product}`"
+            :title="`Abrir nota fiscal de ${item.product}`"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z" />
+              <path d="M9 8h6M9 12h6M9 16h3" />
+            </svg>
+          </a>
+          <p class="item-value">{{ money(item.value) }}</p>
+        </div>
       </div>
-      <p v-if="filteredItems.length === 0" class="empty-text">Nenhuma compra corresponde aos filtros.</p>
+      <p v-if="!loading && !error && filteredItems.length === 0" class="empty-text">Nenhuma compra corresponde aos filtros.</p>
     </div>
   </div>
 </template>
@@ -81,6 +110,8 @@
 <script setup>
 import { computed, ref } from 'vue';
 import { formatMonthName, money } from '../lib/api';
+import CalendarPicker from './CalendarPicker.vue';
+import AppSelect from './AppSelect.vue';
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
@@ -89,13 +120,26 @@ const props = defineProps({
   currentDate: { type: Date, default: () => new Date() },
   disabled: { type: Boolean, default: false },
   currentUserId: { type: String, default: '' },
+  loading: { type: Boolean, default: false },
+  error: { type: String, default: '' },
 });
 
-defineEmits(['back', 'category']);
+defineEmits(['back', 'category', 'month-change']);
 
 const monthName = computed(() => formatMonthName(props.currentDate));
 const monthAbbreviation = computed(() => formatMonthName(props.currentDate, 'short').replace('.', '').toLocaleUpperCase('pt-BR'));
+const selectedMonth = computed(
+  () => `${props.currentDate.getFullYear()}-${String(props.currentDate.getMonth() + 1).padStart(2, '0')}`,
+);
 const buyerFilter = ref('all');
+const buyerFilterOptions = computed(() => [
+  { value: 'all', label: 'Todas as pessoas' },
+  { value: 'mine', label: 'Compradas por mim' },
+  ...props.users
+    .filter((user) => String(user.id) !== String(props.currentUserId))
+    .map((user) => ({ value: `buyer:${user.id}`, label: `Compradas por ${user.name}` })),
+]);
+const categoryOptions = computed(() => props.categories.map((category) => ({ value: category.name, label: category.name })));
 const productSearch = ref('');
 
 const filteredItems = computed(() => {
@@ -105,7 +149,7 @@ const filteredItems = computed(() => {
     const matchesBuyer =
       buyerFilter.value === 'all' ||
       (buyerFilter.value === 'mine' && isMine) ||
-      (buyerFilter.value === 'others' && !isMine);
+      (buyerFilter.value.startsWith('buyer:') && String(item.buyerId) === buyerFilter.value.slice('buyer:'.length));
     const matchesProduct = !query || normalizeSearch(item.product).includes(query);
     return matchesBuyer && matchesProduct;
   });
@@ -166,4 +210,5 @@ const chartBackground = computed(() => {
 function nameOf(userId) {
   return props.users.find((user) => String(user.id) === String(userId))?.name || 'Morador';
 }
+
 </script>

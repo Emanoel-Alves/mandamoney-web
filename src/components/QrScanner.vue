@@ -4,8 +4,8 @@
     <p class="screen-copy">
       {{ cameraMessage }}
     </p>
-    <button class="btn-primary" @click="requestCamera">
-      <span class="btn-primary-text">Ativar câmera</span>
+    <button class="btn-primary" :disabled="requesting" @click="requestCamera">
+      <span class="btn-primary-text">{{ requesting ? 'Solicitando acesso...' : 'Permitir acesso à câmera' }}</span>
       <span class="btn-arrow">→</span>
     </button>
     <button class="btn-cancel" @click="$emit('cancel')">Voltar</button>
@@ -25,41 +25,54 @@
 
 <script setup>
 import jsQR from 'jsqr';
-import { nextTick, onBeforeUnmount, ref } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 
 const emit = defineEmits(['scan', 'cancel']);
 
 const videoEl = ref(null);
 const canvasEl = ref(null);
 const permissionState = ref('pending'); // pending | granted | denied
-const cameraMessage = ref('Toque no botão para permitir o acesso à câmera e ler o QR Code da nota.');
+const cameraMessage = ref('Solicitando acesso à câmera para ler o QR Code da nota.');
+const requesting = ref(false);
 
 let stream = null;
 let rafId = null;
 let scanned = false;
+let disposed = false;
 
 async function requestCamera() {
+  if (requesting.value) return;
   if (!navigator.mediaDevices?.getUserMedia) {
     permissionState.value = 'denied';
     cameraMessage.value = 'A câmera exige HTTPS. Abra o endereço publicado ou um link HTTPS do túnel no celular.';
     return;
   }
 
+  requesting.value = true;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
+    const cameraStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment' },
     });
+    if (disposed) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    stream = cameraStream;
     permissionState.value = 'granted';
     await nextTick();
+    if (disposed) return;
     if (!videoEl.value) throw new Error('Elemento de vídeo não foi criado.');
     videoEl.value.srcObject = stream;
     await videoEl.value.play();
     tick();
   } catch (error) {
+    if (disposed) return;
     permissionState.value = 'denied';
     if (stream) stream.getTracks().forEach((track) => track.stop());
     stream = null;
     cameraMessage.value = `Não foi possível acessar a câmera (${error?.name || 'erro desconhecido'}). Verifique a permissão deste site e tente novamente.`;
+  } finally {
+    requesting.value = false;
   }
 }
 
@@ -84,7 +97,10 @@ function tick() {
   rafId = requestAnimationFrame(tick);
 }
 
+onMounted(requestCamera);
+
 onBeforeUnmount(() => {
+  disposed = true;
   if (rafId) cancelAnimationFrame(rafId);
   if (stream) stream.getTracks().forEach((track) => track.stop());
 });

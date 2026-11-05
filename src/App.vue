@@ -23,7 +23,11 @@
     :disabled="isRequesting"
     @toggle="togglePerson"
     @toggle-paid="togglePaidPerson"
+    @toggle-not-consuming="toggleNotConsuming"
     @category="updateDraftCategory"
+    @edit-item="editDraftItem"
+    @remove-item="removeDraftItem"
+    @update-date="updateDraftDate"
     @cancel="screen = 'home'"
     @save="saveDraft"
     @add-item="addAnotherManualItem"
@@ -31,25 +35,40 @@
 
   <ManualScreen
     v-else-if="screen === 'manual'"
-    v-model:product="product"
+    :product="product"
+    @update:product="updateManualProduct"
     v-model:value="value"
     v-model:market="market"
+    v-model:date="purchaseDate"
     v-model:category="category"
     :categories="categories"
     @back="backFromManual"
     @add="addManualItem"
   />
 
-  <MonthScreen
-    v-else-if="screen === 'month'"
-    :items="currentMonthItems"
+  <ProductCatalogScreen
+    v-else-if="screen === 'catalog'"
+    :products="catalogProducts"
     :categories="categories"
-    :users="householdUsers"
-    :current-date="currentDate"
-    :current-user-id="String(loggedUser.id)"
     :disabled="isRequesting"
     @back="screen = 'home'"
+    @add="addCatalogProduct"
+    @update-category="updateCatalogProductCategory"
+  />
+
+  <MonthScreen
+    v-else-if="screen === 'month'"
+    :items="monthViewItems"
+    :categories="categories"
+    :users="householdUsers"
+    :current-date="monthViewDate"
+    :current-user-id="String(loggedUser.id)"
+    :disabled="isRequesting"
+    :loading="monthViewLoading"
+    :error="monthViewError"
+    @back="screen = 'home'"
     @category="updateSavedItemCategory"
+    @month-change="loadMonthView"
   />
 
   <ShoppingListScreen
@@ -97,7 +116,8 @@
     @ocr="startOcrImport"
     @manual="startManualItem"
     @shopping-list="openShoppingList"
-    @month="screen = 'month'"
+    @catalog="openCatalog"
+    @month="openMonth"
     @logout="logout"
     @open-notifications="openNotifications"
   />
@@ -114,6 +134,7 @@ import ManualScreen from './components/ManualScreen.vue';
 import MessageModal from './components/MessageModal.vue';
 import MonthScreen from './components/MonthScreen.vue';
 import OcrScanner from './components/OcrScanner.vue';
+import ProductCatalogScreen from './components/ProductCatalogScreen.vue';
 import QrScanner from './components/QrScanner.vue';
 import SplitScreen from './components/SplitScreen.vue';
 import ShoppingListScreen from './components/ShoppingListScreen.vue';
@@ -125,6 +146,7 @@ import {
   fetchCategories,
   fetchProductCategoryMappings,
   formatCalendarDate,
+  formatPurchaseDate,
   getApiToken,
   isCurrentMonth,
   mapApiBalance,
@@ -142,6 +164,7 @@ import {
   requestApi,
 } from './lib/api';
 import { useNotifications } from './lib/notifications';
+import { guessProductCategory } from './lib/product-categories';
 
 const screen = ref('login');
 const loggedUser = ref(null);
@@ -158,6 +181,7 @@ const draftSaveIdempotencyKey = ref('');
 const product = ref('');
 const value = ref('');
 const market = ref('');
+const purchaseDate = ref(toInputDate(new Date()));
 const category = ref('');
 const isLoggingIn = ref(false);
 const isRequesting = ref(false);
@@ -171,6 +195,10 @@ const paymentNotificationError = ref('');
 const balanceItemsById = ref({});
 const balanceItemsLoadingId = ref('');
 const balanceItemsError = ref('');
+const monthViewItems = ref([]);
+const monthViewDate = ref(new Date());
+const monthViewLoading = ref(false);
+const monthViewError = ref('');
 
 const showNotifications = ref(false);
 const notificationItems = ref([]);
@@ -183,9 +211,26 @@ const contestLoadingId = ref('');
 const modalMessage = ref('');
 const notifications = useNotifications();
 let notificationRefreshTimer;
+let monthLoadRequestId = 0;
 
 const currentDate = ref(new Date());
 const currentMonthItems = computed(() => items.value.filter((item) => isCurrentMonth(item.date, currentDate.value)));
+const catalogProducts = computed(() => {
+  const productsByCategory = new Map();
+  items.value.forEach((item) => {
+    const category = categories.value.find((entry) => entry.name === item.category);
+    if (!category || !item.product.trim()) return;
+    const key = `${normalizeProductName(item.product)}:${category.id}`;
+    const existing = productsByCategory.get(key);
+    productsByCategory.set(key, {
+      key,
+      product: item.product,
+      categoryId: category.id,
+      saved: Boolean(item.categoryMapped) || Boolean(existing?.saved),
+    });
+  });
+  return [...productsByCategory.values()];
+});
 const total = computed(() => currentMonthItems.value.reduce((sum, item) => sum + item.value, 0));
 const defaultCategoryName = computed(
   () => categories.value.find((item) => item.name === 'Outros')?.name || categories.value[0]?.name || '',
@@ -206,6 +251,28 @@ onUnmounted(() => {
 
 function showMessage(message) {
   modalMessage.value = message;
+}
+
+function toInputDate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function dateForMonth(month) {
+  const [year, monthNumber] = month.split('-').map(Number);
+  return new Date(year, monthNumber - 1, 1);
+}
+
+function monthKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function isHttpUrl(value) {
+  try {
+    const url = new URL(String(value));
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
+  }
 }
 
 async function wakeApi() {
@@ -232,6 +299,21 @@ async function refreshShoppingList() {
 async function openShoppingList() {
   screen.value = 'shopping-list';
   await refreshShoppingList();
+}
+
+async function openCatalog() {
+  if (isRequesting.value) return;
+  isRequesting.value = true;
+  try {
+    const loadedCategories = await fetchCategories();
+    if (!loadedCategories.length) throw new Error('Nenhuma categoria foi cadastrada no banco de dados.');
+    categories.value = loadedCategories;
+    screen.value = 'catalog';
+  } catch (error) {
+    showMessage(error instanceof Error ? error.message : 'Não foi possível carregar as categorias do banco.');
+  } finally {
+    isRequesting.value = false;
+  }
 }
 
 async function addShoppingItem(productName, onSuccess) {
@@ -455,10 +537,15 @@ async function applyBootstrap(bootstrap, month) {
     cursor = page.nextCursor;
   }
   const mappedItems = loadedItems.map(mapApiItem);
+  items.value = await categorizeItems(mappedItems);
+  balances.value = (bootstrap.balances || []).map(mapApiBalance);
+}
+
+async function categorizeItems(mappedItems) {
   const productMappings = await fetchProductCategoryMappings(
     mappedItems.map((item) => item.product),
   );
-  items.value = mappedItems.map((item) => ({
+  return mappedItems.map((item) => ({
     ...item,
     categoryMapped:
       Boolean(productMappings.get(normalizeProductName(item.product))) ||
@@ -467,9 +554,66 @@ async function applyBootstrap(bootstrap, month) {
           normalizeProductName(item.category) !==
             normalizeProductName(defaultCategoryName.value),
       ),
-    category: productMappings.get(normalizeProductName(item.product))?.categoryName || item.category,
+    categorySuggested:
+      !productMappings.get(normalizeProductName(item.product)) &&
+      !(
+        item.category &&
+        normalizeProductName(item.category) !== normalizeProductName(defaultCategoryName.value)
+      ) &&
+      Boolean(guessProductCategory(item.product, categories.value)),
+    category:
+      productMappings.get(normalizeProductName(item.product))?.categoryName ||
+      (item.category &&
+      normalizeProductName(item.category) !== normalizeProductName(defaultCategoryName.value)
+        ? item.category
+        : guessProductCategory(item.product, categories.value) || item.category || defaultCategoryName.value),
   }));
-  balances.value = (bootstrap.balances || []).map(mapApiBalance);
+}
+
+function openMonth() {
+  monthLoadRequestId += 1;
+  monthViewDate.value = new Date(currentDate.value.getFullYear(), currentDate.value.getMonth(), 1);
+  monthViewItems.value = currentMonthItems.value;
+  monthViewLoading.value = false;
+  monthViewError.value = '';
+  screen.value = 'month';
+}
+
+async function loadMonthView(month) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    showMessage('Selecione um mês válido.');
+    return;
+  }
+  const requestId = ++monthLoadRequestId;
+  const selectedDate = dateForMonth(month);
+  monthViewDate.value = selectedDate;
+  monthViewError.value = '';
+  if (month === monthKey(currentDate.value)) {
+    monthViewItems.value = currentMonthItems.value;
+    monthViewLoading.value = false;
+    return;
+  }
+  monthViewItems.value = [];
+  monthViewLoading.value = true;
+  try {
+    const loadedItems = [];
+    let cursor = '';
+    do {
+      const query = new URLSearchParams({ month, limit: '100' });
+      if (cursor) query.set('cursor', cursor);
+      const page = await requestApi(`/items?${query}`);
+      if (!Array.isArray(page.items)) throw new Error('A API retornou uma lista de compras inválida.');
+      loadedItems.push(...page.items.map(mapApiItem));
+      cursor = String(page.nextCursor || '');
+    } while (cursor && requestId === monthLoadRequestId);
+    if (requestId !== monthLoadRequestId) return;
+    monthViewItems.value = await categorizeItems(loadedItems);
+  } catch (error) {
+    if (requestId !== monthLoadRequestId) return;
+    monthViewError.value = error instanceof Error ? error.message : 'Não foi possível carregar as compras deste mês.';
+  } finally {
+    if (requestId === monthLoadRequestId) monthViewLoading.value = false;
+  }
 }
 
 function startQrImport() {
@@ -503,7 +647,8 @@ async function readNf(qrCode) {
         product: String(item.product ?? item.Produto ?? ''),
         value: Number(item.value ?? item.Valor_Total ?? item.valor ?? 0),
         market: data.market || String(item.market ?? item.Mercado ?? 'NFC-e'),
-        date: data.date || String(item.date ?? item.Data ?? formatCalendarDate()),
+        date: formatPurchaseDate(data.date || String(item.date ?? item.Data ?? formatCalendarDate())),
+        receiptUrl: isHttpUrl(data.receiptUrl || data.receiptLink || qrCode) ? String(data.receiptUrl || data.receiptLink || qrCode) : '',
         buyerId: loggedUser.value.id,
         sharedWith: [loggedUser.value.id],
         paidWith: [],
@@ -516,10 +661,12 @@ async function readNf(qrCode) {
     );
     draftItems.value = parsedItems.map((item) => {
       const mapping = productMappings.get(normalizeProductName(item.product));
+      const suggestedCategory = guessProductCategory(item.product, categories.value);
       return {
         ...item,
-        category: mapping?.categoryName || defaultCategoryName.value,
+        category: mapping?.categoryName || suggestedCategory || defaultCategoryName.value,
         categoryMapped: Boolean(mapping),
+        categorySuggested: !mapping && Boolean(suggestedCategory),
       };
     });
     screen.value = 'split';
@@ -559,7 +706,8 @@ async function readNfImage({ imageBase64, mimeType }) {
         product: String(item.product ?? item.Produto ?? ''),
         value: Number(item.value ?? item.Valor_Total ?? item.valor ?? 0),
         market: data.market || String(item.market ?? item.Mercado ?? 'Compra por OCR'),
-        date: data.date || String(item.date ?? item.Data ?? formatCalendarDate()),
+        date: formatPurchaseDate(data.date || String(item.date ?? item.Data ?? formatCalendarDate())),
+        receiptUrl: isHttpUrl(data.receiptUrl || data.receiptLink) ? String(data.receiptUrl || data.receiptLink) : '',
         buyerId: loggedUser.value.id,
         sharedWith: [loggedUser.value.id],
         paidWith: [],
@@ -572,10 +720,12 @@ async function readNfImage({ imageBase64, mimeType }) {
     );
     draftItems.value = parsedItems.map((item) => {
       const mapping = productMappings.get(normalizeProductName(item.product));
+      const suggestedCategory = guessProductCategory(item.product, categories.value);
       return {
         ...item,
-        category: mapping?.categoryName || defaultCategoryName.value,
+        category: mapping?.categoryName || suggestedCategory || defaultCategoryName.value,
         categoryMapped: Boolean(mapping),
+        categorySuggested: !mapping && Boolean(suggestedCategory),
       };
     });
     screen.value = 'split';
@@ -589,26 +739,113 @@ async function readNfImage({ imageBase64, mimeType }) {
 
 function togglePerson(itemId, userId) {
   draftSaveIdempotencyKey.value = '';
-  draftItems.value = draftItems.value.map((item) =>
-    item.id !== itemId
-      ? item
-      : {
-          ...item,
-          sharedWith: item.sharedWith.includes(userId) ? item.sharedWith.filter((id) => id !== userId) : [...item.sharedWith, userId],
-          paidWith: item.sharedWith.includes(userId) ? item.paidWith.filter((id) => id !== userId) : item.paidWith,
-        },
-  );
+  draftItems.value = draftItems.value.map((item) => {
+    if (item.id !== itemId) return item;
+    const sharedWith = item.sharedWith.includes(userId)
+      ? item.sharedWith.filter((id) => id !== userId)
+      : [...item.sharedWith, userId];
+    const paidWith = item.paidWith.filter((id) => sharedWith.includes(id));
+    const notConsuming = (item.notConsuming || []).filter((id) => sharedWith.includes(id));
+    return {
+      ...item,
+      sharedWith,
+      paidWith,
+      notConsuming,
+      cashContributions: buildCashContributions(item.value, sharedWith, paidWith, item.buyerId),
+    };
+  });
 }
 
 function togglePaidPerson(itemId, userId) {
   draftSaveIdempotencyKey.value = '';
   draftItems.value = draftItems.value.map((item) => {
-    if (item.id !== itemId || !item.sharedWith.includes(userId) || userId === item.buyerId) return item;
+    if (item.id !== itemId || userId === item.buyerId) return item;
+    const paidWith = item.paidWith.includes(userId)
+      ? item.paidWith.filter((id) => id !== userId)
+      : [...item.paidWith, userId];
     return {
       ...item,
-      paidWith: item.paidWith.includes(userId) ? item.paidWith.filter((id) => id !== userId) : [...item.paidWith, userId],
+      paidWith,
+      cashContributions: buildCashContributions(item.value, item.sharedWith, paidWith, item.buyerId),
     };
   });
+}
+
+function toggleNotConsuming(itemId, userId) {
+  draftSaveIdempotencyKey.value = '';
+  draftItems.value = draftItems.value.map((item) => {
+    if (item.id !== itemId || !item.sharedWith.includes(userId)) return item;
+    const current = item.notConsuming || [];
+    return {
+      ...item,
+      notConsuming: current.includes(userId)
+        ? current.filter((id) => id !== userId)
+        : [...current, userId],
+    };
+  });
+}
+
+function buildCashContributions(value, splitWith, paidWith, buyerId) {
+  const totalCents = Math.round((Number(value) + Number.EPSILON) * 100);
+  const shares = allocateDraftShares(value, splitWith);
+  const contributions = paidWith
+    .filter((id) => id !== String(buyerId) && splitWith.includes(id))
+    .map((userId) => ({ userId, amountCents: shares.get(userId) || 0 }));
+  const paidByOthers = contributions.reduce((total, entry) => total + entry.amountCents, 0);
+  const buyerPaidCents = totalCents - paidByOthers;
+  if (buyerPaidCents > 0 || contributions.length === 0) {
+    contributions.push({ userId: String(buyerId), amountCents: Math.max(0, buyerPaidCents) });
+  }
+  return contributions;
+}
+
+function allocateDraftShares(value, participantIds) {
+  const amountCents = Math.round((Number(value) + Number.EPSILON) * 100);
+  const uniqueIds = [...new Set(participantIds.map(String))].sort();
+  const base = uniqueIds.length ? Math.floor(amountCents / uniqueIds.length) : 0;
+  let remainder = uniqueIds.length ? amountCents - base * uniqueIds.length : 0;
+  return new Map(
+    uniqueIds.map((id) => {
+      const cents = base + (remainder > 0 ? 1 : 0);
+      if (remainder > 0) remainder -= 1;
+      return [id, cents];
+    }),
+  );
+}
+
+function editDraftItem(itemId, changes) {
+  draftItems.value = draftItems.value.map((item) =>
+    item.id === itemId
+      ? {
+          ...item,
+          ...changes,
+          ...(changes.value !== undefined && item.cashContributions
+            ? {
+                cashContributions: buildCashContributions(
+                  changes.value,
+                  item.sharedWith,
+                  item.paidWith,
+                  item.buyerId,
+                ),
+              }
+            : {}),
+        }
+      : item,
+  );
+  draftSaveIdempotencyKey.value = '';
+}
+
+function removeDraftItem(itemId) {
+  draftItems.value = draftItems.value.filter((item) => item.id !== itemId);
+  draftSaveIdempotencyKey.value = '';
+}
+
+function updateDraftDate(itemId, date) {
+  if (!date) return;
+  draftItems.value = draftItems.value.map((item) =>
+    item.id === itemId ? { ...item, date: formatPurchaseDate(date) } : item,
+  );
+  draftSaveIdempotencyKey.value = '';
 }
 
 async function updateDraftCategory(productName, categoryName) {
@@ -646,6 +883,47 @@ async function persistSelectedProductCategory(productName, categoryName) {
   }
 }
 
+async function addCatalogProduct(productName, categoryId, onSuccess) {
+  const selectedCategory = categories.value.find((item) => item.id === categoryId);
+  if (!selectedCategory) {
+    showMessage('A categoria selecionada não está disponível.');
+    return;
+  }
+  if (isRequesting.value) return;
+  isRequesting.value = true;
+  try {
+    const mapping = await saveProductCategoryMapping(productName, selectedCategory.id);
+    applyProductCategoryMapping(mapping);
+    onSuccess?.();
+  } catch (error) {
+    showMessage(error instanceof Error ? error.message : 'Não foi possível cadastrar este produto.');
+  } finally {
+    isRequesting.value = false;
+  }
+}
+
+async function updateCatalogProductCategory(productName, categoryId, onComplete) {
+  const selectedCategory = categories.value.find((item) => item.id === categoryId);
+  if (!selectedCategory) {
+    onComplete?.('A categoria selecionada não está disponível.');
+    return;
+  }
+  if (isRequesting.value) {
+    onComplete?.('Aguarde a operação atual terminar.');
+    return;
+  }
+  isRequesting.value = true;
+  try {
+    const mapping = await saveProductCategoryMapping(productName, selectedCategory.id);
+    applyProductCategoryMapping(mapping);
+    onComplete?.();
+  } catch (error) {
+    onComplete?.(error instanceof Error ? error.message : 'Não foi possível atualizar a categoria do produto.');
+  } finally {
+    isRequesting.value = false;
+  }
+}
+
 function applyProductCategoryMapping(mapping) {
   const normalizedProduct = mapping.normalizedProduct;
   draftSaveIdempotencyKey.value = '';
@@ -659,12 +937,18 @@ function applyProductCategoryMapping(mapping) {
       ? { ...item, category: mapping.categoryName, categoryMapped: true }
       : item,
   );
+  monthViewItems.value = monthViewItems.value.map((item) =>
+    normalizeProductName(item.product) === normalizedProduct
+      ? { ...item, category: mapping.categoryName, categoryMapped: true }
+      : item,
+  );
 }
 
 function startManualItem() {
   draftItems.value = [];
   draftSaveIdempotencyKey.value = '';
   category.value = defaultCategoryName.value;
+  purchaseDate.value = toInputDate(new Date());
   screen.value = 'manual';
 }
 
@@ -673,6 +957,7 @@ function addAnotherManualItem() {
   product.value = '';
   value.value = '';
   market.value = '';
+  purchaseDate.value = toInputDate(new Date());
   category.value = defaultCategoryName.value;
   screen.value = 'manual';
 }
@@ -683,7 +968,11 @@ function backFromManual() {
 
 async function saveDraft() {
   if (isRequesting.value) return;
-  if (draftItems.value.some((item) => item.sharedWith.length === 0)) {
+  if (!draftItems.value.length) {
+    showMessage('Adicione ao menos um produto antes de salvar a compra.');
+    return;
+  }
+  if (draftItems.value.some((item) => item.sharedWith.length === 0 || item.sharedWith.every((id) => (item.notConsuming || []).includes(id)))) {
     showMessage('Cada item precisa ter pelo menos uma pessoa.');
     return;
   }
@@ -707,8 +996,15 @@ async function saveDraft() {
         product: item.product,
         category: item.category,
         valueCents,
-        participantIds: item.sharedWith,
+        ...(item.receiptUrl ? { receiptUrl: item.receiptUrl } : {}),
+        participantIds: item.sharedWith.filter((id) => !(item.notConsuming || []).includes(id)),
         paidDirectlyBy: item.paidWith,
+        cashContributions: item.cashContributions || [
+          {
+            userId: String(item.buyerId),
+            amountCents: valueCents,
+          },
+        ],
       };
     });
     await postApi('/items/batch', { items: payload }, { idempotencyKey: draftSaveIdempotencyKey.value });
@@ -819,21 +1115,45 @@ async function resolveContest(notification, decision) {
   }
 }
 
-function addManualItem() {
+function updateManualProduct(productName) {
+  product.value = productName;
+  const suggestedCategory = guessProductCategory(productName, categories.value);
+  category.value = suggestedCategory || defaultCategoryName.value;
+}
+
+async function addManualItem() {
   const parsedValue = Number(value.value.replace(',', '.'));
   if (!product.value.trim() || !Number.isFinite(parsedValue) || parsedValue <= 0 || !loggedUser.value) {
     showMessage('Informe o produto e um valor maior que zero.');
     return;
   }
+  if (isRequesting.value) return;
+  isRequesting.value = true;
+  let savedMapping;
+  try {
+    const mappings = await fetchProductCategoryMappings([product.value.trim()]);
+    savedMapping = mappings.get(normalizeProductName(product.value));
+  } catch (error) {
+    showMessage(
+      error instanceof Error
+        ? error.message
+        : 'Não foi possível consultar a categoria já salva para este produto.',
+    );
+    isRequesting.value = false;
+    return;
+  }
+  const suggestedCategory = guessProductCategory(product.value, categories.value);
   draftItems.value = [
     ...draftItems.value,
     {
       id: `manual-${Date.now()}-${draftItems.value.length}`,
       product: product.value.trim(),
-      category: category.value || defaultCategoryName.value,
+      category: savedMapping?.categoryName || category.value || suggestedCategory || defaultCategoryName.value,
+      categoryMapped: Boolean(savedMapping),
+      categorySuggested: !savedMapping && Boolean(suggestedCategory),
       value: parsedValue,
       market: market.value.trim() || 'Compra manual',
-      date: formatCalendarDate(),
+      date: formatPurchaseDate(purchaseDate.value || toInputDate(new Date())),
       buyerId: loggedUser.value.id,
       sharedWith: [loggedUser.value.id],
       paidWith: [],
@@ -843,8 +1163,10 @@ function addManualItem() {
   product.value = '';
   value.value = '';
   market.value = '';
+  purchaseDate.value = toInputDate(new Date());
   category.value = '';
   screen.value = 'split';
+  isRequesting.value = false;
 }
 
 async function logout() {
@@ -858,6 +1180,10 @@ async function logout() {
     loggedUser.value = null;
     householdUsers.value = [];
     items.value = [];
+    monthViewItems.value = [];
+    monthViewLoading.value = false;
+    monthViewError.value = '';
+    monthLoadRequestId += 1;
     shoppingListItems.value = [];
     balances.value = [];
     disputes.value = [];
