@@ -202,6 +202,18 @@ export const fetchCategories = async () => {
   });
 };
 
+export const checkReceiptAlreadyAdded = async (receiptIdentifier) => {
+  const identifier = String(receiptIdentifier ?? '');
+  if (!/^\d{44}$/.test(identifier)) {
+    throw new Error('O identificador da nota fiscal é inválido.');
+  }
+  const data = await requestApi(`/receipts/${identifier}`);
+  if (typeof data.alreadyAdded !== 'boolean') {
+    throw new Error('A API retornou uma verificação de nota inválida.');
+  }
+  return data.alreadyAdded;
+};
+
 export const normalizeProductName = (value) =>
   String(value ?? '')
     .normalize('NFD')
@@ -280,6 +292,7 @@ export const mapApiItem = (item) => {
     market: String(item.market ?? item.Mercado ?? ''),
     date: formatPurchaseDate(item.date ?? item.Data ?? ''),
     receiptUrl: String(item.receiptUrl ?? item.receiptLink ?? ''),
+    receiptIdentifier: String(item.receiptIdentifier ?? ''),
     buyerId: String(item.buyerId ?? item.Comprador_ID ?? item.Comprador ?? ''),
     sharedWith: parseParticipantIds(item.participantIds ?? item.sharedWith ?? item.Pertence_A),
     paidWith: parseParticipantIds(item.paidDirectlyBy ?? item.paidWith ?? item.Pago_Direto_Por),

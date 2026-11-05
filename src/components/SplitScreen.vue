@@ -12,12 +12,31 @@
         </p>
       </div>
 
+      <div v-if="receiptGroup && items.some((item) => item.receiptGroupId === receiptGroup.id)" class="receipt-group-controls">
+        <div>
+          <label class="participant-label split-date-label" for="receipt-group-date">DATA DA COMPRA</label>
+          <CalendarPicker
+            id="receipt-group-date"
+            class="split-date-picker"
+            :model-value="dateInputValue(receiptGroup.date)"
+            :disabled="disabled"
+            @update:model-value="$emit('update-receipt-date', $event)"
+          />
+        </div>
+        <a v-if="receiptGroup.receiptUrl" class="receipt-link" :href="receiptGroup.receiptUrl" target="_blank" rel="noopener noreferrer">
+          Abrir nota fiscal
+        </a>
+        <p v-if="receiptGroup.receiptIdentifier" class="receipt-identifier-note">
+          Identificador da nota salvo para avisar sobre importações repetidas.
+        </p>
+      </div>
+
       <div v-for="item in items" :key="item.id" class="product-card">
         <div class="product-header">
           <div>
             <p class="item-name">{{ item.product }}</p>
             <p class="item-meta">{{ item.market }} • {{ item.date }}</p>
-            <a v-if="item.receiptUrl" class="receipt-link" :href="item.receiptUrl" target="_blank" rel="noopener noreferrer">
+            <a v-if="!item.receiptGroupId && item.receiptUrl" class="receipt-link" :href="item.receiptUrl" target="_blank" rel="noopener noreferrer">
               Abrir nota fiscal
             </a>
             <AppSelect
@@ -60,14 +79,16 @@
           </div>
         </div>
 
-        <label class="participant-label split-date-label" :for="`item-date-${item.id}`">DATA DA COMPRA</label>
-        <CalendarPicker
-          :id="`item-date-${item.id}`"
-          class="split-date-picker"
-          :model-value="dateInputValue(item.date)"
-          :disabled="disabled"
-          @update:model-value="$emit('update-date', item.id, $event)"
-        />
+        <template v-if="!item.receiptGroupId">
+          <label class="participant-label split-date-label" :for="`item-date-${item.id}`">DATA DA COMPRA</label>
+          <CalendarPicker
+            :id="`item-date-${item.id}`"
+            class="split-date-picker"
+            :model-value="dateInputValue(item.date)"
+            :disabled="disabled"
+            @update:model-value="$emit('update-date', item.id, $event)"
+          />
+        </template>
 
         <p class="participant-label">DIVIDIR COM</p>
         <div class="chips">
@@ -147,6 +168,30 @@
       <button class="btn-cancel" type="button" :disabled="disabled" @click="closeEditor">Cancelar</button>
     </section>
   </div>
+
+  <div v-if="receiptPrompt" class="modal-backdrop">
+    <section class="message-modal receipt-warning-modal" role="dialog" aria-modal="true" aria-labelledby="receipt-warning-title">
+      <h2 id="receipt-warning-title" class="modal-title">
+        {{ receiptPrompt === 'duplicate' ? 'Esta nota já foi adicionada' : 'Não foi possível verificar esta nota' }}
+      </h2>
+      <p v-if="receiptPrompt === 'duplicate'" class="modal-message">
+        Encontramos uma compra com o mesmo identificador. Você pode continuar com a importação ou descartá-la.
+      </p>
+      <template v-else>
+        <p class="modal-message">
+          A nota foi lida, mas a consulta de duplicidade falhou. Você pode continuar mesmo sem essa verificação ou descartar a importação.
+        </p>
+        <p v-if="receiptPromptError" class="receipt-warning-error">{{ receiptPromptError }}</p>
+      </template>
+      <div class="receipt-warning-actions">
+        <button class="btn-cancel" type="button" :disabled="disabled" @click="$emit('discard-receipt')">Descartar importação</button>
+        <button class="btn-primary" type="button" :disabled="disabled" @click="$emit('continue-receipt')">
+          <span class="btn-primary-text">Continuar</span>
+          <span class="btn-arrow">→</span>
+        </button>
+      </div>
+    </section>
+  </div>
 </template>
 
 <script setup>
@@ -155,13 +200,16 @@ import { money } from '../lib/api';
 import CalendarPicker from './CalendarPicker.vue';
 import AppSelect from './AppSelect.vue';
 
-const emit = defineEmits(['toggle', 'toggle-paid', 'category', 'cancel', 'save', 'add-item', 'edit-item', 'remove-item', 'update-date']);
+const emit = defineEmits(['toggle', 'toggle-paid', 'category', 'cancel', 'save', 'add-item', 'edit-item', 'remove-item', 'update-date', 'update-receipt-date', 'continue-receipt', 'discard-receipt']);
 
 const props = defineProps({
   user: { type: Object, required: true },
   items: { type: Array, default: () => [] },
   users: { type: Array, default: () => [] },
   categories: { type: Array, default: () => [] },
+  receiptGroup: { type: Object, default: null },
+  receiptPrompt: { type: String, default: '' },
+  receiptPromptError: { type: String, default: '' },
   disabled: { type: Boolean, default: false },
 });
 

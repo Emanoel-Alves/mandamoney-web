@@ -17,6 +17,41 @@
 
       <div v-if="showNotifications" class="notifications-panel">
         <h3>Notificações</h3>
+        <div class="push-notifications-settings">
+          <p v-if="pushStatus === 'install-required'">
+            No iPhone, use Compartilhar → Adicionar à Tela de Início e abra o Manda Money instalado para ativar push.
+          </p>
+          <p v-else-if="pushStatus === 'unsupported'">
+            Este navegador não oferece suporte a notificações push ou precisa ser acessado por HTTPS.
+          </p>
+          <p v-else-if="pushStatus === 'not-configured'">
+            Notificações push ainda não estão configuradas no servidor.
+          </p>
+          <p v-else-if="pushStatus === 'denied'">
+            A permissão está bloqueada. Altere as notificações do Manda Money nos ajustes do navegador.
+          </p>
+          <p v-else-if="pushStatus === 'enabled'">Notificações push ativadas neste aparelho.</p>
+          <p v-else-if="pushStatus === 'available'">Receba no celular avisos de compras compartilhadas, pagamentos e contestações.</p>
+          <p v-if="pushError" class="push-notifications-error">{{ pushError }}</p>
+          <button
+            v-if="pushStatus === 'available'"
+            class="push-notifications-button"
+            type="button"
+            :disabled="pushLoading"
+            @click="$emit('enable-push')"
+          >
+            {{ pushLoading ? 'Ativando...' : 'Ativar neste aparelho' }}
+          </button>
+          <button
+            v-else-if="pushStatus === 'enabled'"
+            class="push-notifications-button push-notifications-disable"
+            type="button"
+            :disabled="pushLoading"
+            @click="$emit('disable-push')"
+          >
+            {{ pushLoading ? 'Desativando...' : 'Desativar neste aparelho' }}
+          </button>
+        </div>
         <p v-if="notificationError" class="balance-details-error">{{ notificationError }}</p>
         <p v-if="notificationItems.length === 0">Nenhuma novidade por aqui.</p>
         <div v-for="item in notificationItems" :key="item.id" class="notification-item">
@@ -52,26 +87,95 @@
         </div>
       </div>
 
-      <div class="summary">
-        <div>
-          <p class="summary-label">TOTAL DA CASA</p>
-          <p
-            class="summary-value"
-            :class="{
-              'summary-value-long': totalDisplay.length > 12,
-              'summary-value-extra-long': totalDisplay.length > 16,
-            }"
-          >
-            {{ totalDisplay }}
-          </p>
-          <p class="summary-caption">em {{ monthName }}</p>
+      <section
+        class="summary-carousel"
+        :class="{ 'summary-carousel-accumulated': activeSummarySlide === 1 }"
+        aria-label="Resumo das compras"
+        aria-roledescription="carrossel"
+        tabindex="0"
+        :aria-live="summarySlideCount > 1 ? 'polite' : 'off'"
+        @pointerdown="startSummarySwipe"
+        @pointerup.window="finishSummarySwipe"
+        @pointercancel.window="cancelSummarySwipe"
+        @keydown.left.prevent="changeSummarySlide(-1)"
+        @keydown.right.prevent="changeSummarySlide(1)"
+      >
+        <div class="summary-carousel-viewport">
+          <div class="summary-carousel-track" :style="summaryTrackStyle">
+            <article
+              class="summary summary-slide"
+              :style="summarySlideStyle"
+              :aria-hidden="activeSummarySlide !== 0"
+            >
+              <div>
+                <p class="summary-label">TOTAL DA CASA</p>
+                <p
+                  class="summary-value"
+                  :class="{
+                    'summary-value-long': totalDisplay.length > 12,
+                    'summary-value-extra-long': totalDisplay.length > 16,
+                  }"
+                >
+                  {{ totalDisplay }}
+                </p>
+                <p class="summary-caption">em {{ monthName }}</p>
+              </div>
+              <div class="summary-month">
+                <p class="summary-label">MÊS ATUAL</p>
+                <p class="month-value">{{ monthAbbreviation }}</p>
+                <p class="summary-caption">{{ currentDate.getFullYear() }}</p>
+              </div>
+            </article>
+
+            <article
+              v-if="hasAccumulatedPurchases"
+              class="summary accumulated-summary summary-slide"
+              :style="summarySlideStyle"
+              :aria-hidden="activeSummarySlide !== 1"
+            >
+              <div>
+                <p class="accumulated-summary-label">ACUMULADO DE COMPRAS · {{ accumulatedRange }}</p>
+                <p class="accumulated-summary-value">{{ accumulatedTotal }}</p>
+                <p class="accumulated-summary-caption">
+                  Há pendências em: {{ accumulatedOpenMonths || 'mês anterior' }}
+                </p>
+              </div>
+            </article>
+          </div>
+
+          <div v-if="hasAccumulatedPurchases" class="summary-carousel-controls">
+            <button
+              class="summary-carousel-arrow"
+              type="button"
+              aria-label="Resumo anterior"
+              @click="changeSummarySlide(-1)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+            </button>
+            <button
+              class="summary-carousel-arrow"
+              type="button"
+              aria-label="Próximo resumo"
+              @click="changeSummarySlide(1)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+            </button>
+          </div>
         </div>
-        <div class="summary-month">
-          <p class="summary-label">MÊS ATUAL</p>
-          <p class="month-value">{{ monthAbbreviation }}</p>
-          <p class="summary-caption">{{ currentDate.getFullYear() }}</p>
+
+        <div v-if="hasAccumulatedPurchases" class="summary-carousel-dots" aria-label="Selecionar resumo">
+          <button
+            v-for="index in summarySlideCount"
+            :key="index"
+            class="summary-carousel-dot"
+            :class="{ 'summary-carousel-dot-active': activeSummarySlide === index - 1 }"
+            type="button"
+            :aria-label="`Mostrar resumo ${index}`"
+            :aria-pressed="activeSummarySlide === index - 1"
+            @click="summarySlide = index - 1"
+          />
         </div>
-      </div>
+      </section>
 
       <p class="section-title">Adicionar compra</p>
       <div class="actions">
@@ -303,13 +407,14 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { money, formatPaidDate, formatMonthName, formatTodayLabel } from '../lib/api';
 
 const props = defineProps({
   user: { type: Object, required: true },
   total: { type: Number, required: true },
   currentDate: { type: Date, default: () => new Date() },
+  accumulatedPurchases: { type: Object, default: null },
   balances: { type: Array, default: () => [] },
   users: { type: Array, default: () => [] },
   items: { type: Array, default: () => [] },
@@ -321,6 +426,9 @@ const props = defineProps({
   unreadCount: { type: Number, default: 0 },
   showNotifications: { type: Boolean, default: false },
   notificationItems: { type: Array, default: () => [] },
+  pushStatus: { type: String, default: 'unknown' },
+  pushError: { type: String, default: '' },
+  pushLoading: { type: Boolean, default: false },
   payLoadingId: { type: String, default: '' },
   balanceLoadingId: { type: String, default: '' },
   confirmLoadingId: { type: String, default: '' },
@@ -344,12 +452,92 @@ const emit = defineEmits([
   'month',
   'logout',
   'open-notifications',
+  'enable-push',
+  'disable-push',
 ]);
 
 const totalDisplay = computed(() => money(props.total));
+const accumulatedTotal = computed(() =>
+  money(Number(props.accumulatedPurchases?.amountCents || 0) / 100),
+);
+const accumulatedRange = computed(() =>
+  formatMonthRange(
+    props.accumulatedPurchases?.fromMonth,
+    props.accumulatedPurchases?.toMonth,
+  ),
+);
+const accumulatedOpenMonths = computed(() =>
+  (props.accumulatedPurchases?.openMonths || [])
+    .map((month) => monthLabel(month, true))
+    .filter(Boolean)
+    .join(' · '),
+);
+const hasAccumulatedPurchases = computed(
+  () =>
+    Boolean(props.accumulatedPurchases) &&
+    props.accumulatedPurchases.fromMonth < props.accumulatedPurchases.toMonth,
+);
+const summarySlideCount = computed(() => (hasAccumulatedPurchases.value ? 2 : 1));
+const summarySlide = ref(0);
+const activeSummarySlide = computed(() =>
+  hasAccumulatedPurchases.value ? summarySlide.value : 0,
+);
+watch(hasAccumulatedPurchases, () => {
+  summarySlide.value = 0;
+});
+const summaryTrackStyle = computed(() => ({
+  width: `${summarySlideCount.value * 100}%`,
+  transform: `translateX(-${(activeSummarySlide.value * 100) / summarySlideCount.value}%)`,
+}));
+const summarySlideStyle = computed(() => ({
+  width: `${100 / summarySlideCount.value}%`,
+}));
+let summaryPointerStart;
+
+function changeSummarySlide(direction) {
+  if (!hasAccumulatedPurchases.value) return;
+  summarySlide.value = (summarySlide.value + direction + summarySlideCount.value) % summarySlideCount.value;
+}
+
+function startSummarySwipe(event) {
+  if (event.pointerType === 'mouse' && event.button !== 0) return;
+  summaryPointerStart = event.clientX;
+}
+
+function finishSummarySwipe(event) {
+  if (summaryPointerStart === undefined) return;
+  const distance = event.clientX - summaryPointerStart;
+  summaryPointerStart = undefined;
+  if (Math.abs(distance) < 48) return;
+  changeSummarySlide(distance < 0 ? 1 : -1);
+}
+
+function cancelSummarySwipe() {
+  summaryPointerStart = undefined;
+}
+
 const todayLabel = computed(() => formatTodayLabel(props.currentDate));
 const monthName = computed(() => formatMonthName(props.currentDate));
 const monthAbbreviation = computed(() => formatMonthName(props.currentDate, 'short').replace('.', '').toLocaleUpperCase('pt-BR'));
+
+function formatMonthRange(fromMonth, toMonth) {
+  const from = monthLabel(fromMonth);
+  const to = monthLabel(toMonth);
+  if (!from || !to) return '';
+  return fromMonth.slice(0, 4) === toMonth.slice(0, 4)
+    ? `${from}–${to}`
+    : `${from}/${fromMonth.slice(2, 4)}–${to}/${toMonth.slice(2, 4)}`;
+}
+
+function monthLabel(value, includeYear = false) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(value || ''))) return '';
+  const [year, month] = value.split('-').map(Number);
+  const label = new Intl.DateTimeFormat('pt-BR', { month: 'short', timeZone: 'UTC' })
+    .format(new Date(Date.UTC(year, month - 1, 1)))
+    .replace('.', '')
+    .toLocaleUpperCase('pt-BR');
+  return includeYear ? `${label}/${String(year).slice(-2)}` : label;
+}
 const expandedBalanceId = ref('');
 const balancePromptId = ref('');
 const showBalanceHistory = ref(false);

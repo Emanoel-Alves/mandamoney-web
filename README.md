@@ -11,12 +11,14 @@ para rodar como um site estático no GitHub Pages.
   em HTTPS, então funciona sem configuração extra. Só não funciona em
   `http://localhost` puro sem `https`, dependendo do navegador (Chrome
   libera câmera em `localhost` mesmo sem HTTPS para desenvolvimento).
-- **Notificações**: como GitHub Pages é hospedagem estática (sem servidor
-  rodando push), não dá pra usar push notification de verdade. Em vez
-  disso, o sininho 🔔 mostra itens novos e solicitações de pagamento ou
-  contestação consultadas na API quando o painel é aberto. Os itens novos são
-  guardados no `localStorage` do navegador; solicitações ficam no banco e
-  aparecem em outros dispositivos.
+- **Notificações**: o sininho 🔔 mostra itens novos e solicitações de pagamento
+  ou contestação. Com a API configurada para Web Push, também é possível ativar
+  notificações neste aparelho para receber esses avisos mesmo com o app fechado.
+  No iPhone, é necessário usar iOS/iPadOS 16.4 ou posterior, adicionar o site à
+  Tela de Início pelo menu Compartilhar e ativar as notificações dentro do app
+  instalado. A permissão só é solicitada após tocar em “Ativar neste aparelho”.
+  As notificações são enviadas quando alguém compartilha uma compra, informa
+  um pagamento ou contesta um item.
 - **Backend**: usa a API Manda Money (`VITE_MANDAMONEY_API_URL`) para
   autenticação, categorias, compras, saldos, pagamentos, contestações e
   balanceamentos. A API pode encaminhar NFC-e e OCR aos provedores existentes.

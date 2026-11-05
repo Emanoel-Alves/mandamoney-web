@@ -1,5 +1,5 @@
 <template>
-  <div class="page">
+  <div class="page" :aria-busy="loading">
     <div class="page-content">
       <button class="back" @click="$emit('back')">← Voltar</button>
       <h1 class="screen-title">Compras de {{ monthName }} de {{ currentDate.getFullYear() }}</h1>
@@ -40,8 +40,7 @@
         <p v-else class="empty-text">Nenhum valor comprado neste mês.</p>
       </section>
 
-      <p v-if="loading" class="empty-text">Carregando compras do mês...</p>
-      <p v-else-if="error" class="month-view-error">{{ error }}</p>
+      <p v-if="error" class="month-view-error">{{ error }}</p>
 
       <section class="month-filters" aria-label="Filtros das compras">
         <div class="month-filter-control">
@@ -105,6 +104,15 @@
       <p v-if="!loading && !error && filteredItems.length === 0" class="empty-text">Nenhuma compra corresponde aos filtros.</p>
     </div>
   </div>
+  <div
+    v-if="loading"
+    class="month-loading-overlay"
+    role="status"
+    aria-live="polite"
+    aria-label="Carregando compras do mês"
+  >
+    <LoadingScreen label="Carregando compras do mês..." />
+  </div>
 </template>
 
 <script setup>
@@ -112,6 +120,7 @@ import { computed, ref } from 'vue';
 import { formatMonthName, money } from '../lib/api';
 import CalendarPicker from './CalendarPicker.vue';
 import AppSelect from './AppSelect.vue';
+import LoadingScreen from './LoadingScreen.vue';
 
 const props = defineProps({
   items: { type: Array, default: () => [] },

@@ -20,6 +20,9 @@
     :items="draftItems"
     :users="householdUsers"
     :categories="categories"
+    :receipt-group="draftReceipt"
+    :receipt-prompt="receiptPrompt"
+    :receipt-prompt-error="receiptPromptError"
     :disabled="isRequesting"
     @toggle="togglePerson"
     @toggle-paid="togglePaidPerson"
@@ -28,6 +31,9 @@
     @edit-item="editDraftItem"
     @remove-item="removeDraftItem"
     @update-date="updateDraftDate"
+    @update-receipt-date="updateReceiptDate"
+    @continue-receipt="continueReceiptImport"
+    @discard-receipt="discardReceiptImport"
     @cancel="screen = 'home'"
     @save="saveDraft"
     @add-item="addAnotherManualItem"
@@ -92,6 +98,7 @@
     :balances="balances"
     :items="currentMonthItems"
     :current-date="currentDate"
+    :accumulated-purchases="accumulatedPurchases"
     :disputes="disputes"
     :balance-items="balanceItemsById"
     :balance-items-loading-id="balanceItemsLoadingId"
@@ -100,6 +107,9 @@
     :unread-count="notifications.unreadCount.value + paymentNotifications.length + contestNotifications.length"
     :show-notifications="showNotifications"
     :notification-items="notificationItems"
+    :push-status="pushStatus"
+    :push-error="pushError"
+    :push-loading="pushLoading"
     :pay-loading-id="payLoadingId"
     :balance-loading-id="balanceLoadingId"
     :confirm-loading-id="confirmLoadingId"
@@ -120,6 +130,8 @@
     @month="openMonth"
     @logout="logout"
     @open-notifications="openNotifications"
+    @enable-push="enableDevicePush"
+    @disable-push="disableDevicePush"
   />
 
   <MessageModal v-if="modalMessage" :message="modalMessage" @close="modalMessage = ''" />
@@ -141,6 +153,7 @@ import ShoppingListScreen from './components/ShoppingListScreen.vue';
 import {
   addShoppingListItem,
   checkApiReadiness,
+  checkReceiptAlreadyAdded,
   clearApiToken,
   createIdempotencyKey,
   fetchCategories,
@@ -164,6 +177,11 @@ import {
   requestApi,
 } from './lib/api';
 import { useNotifications } from './lib/notifications';
+import {
+  disablePushNotifications,
+  enablePushNotifications,
+  inspectPushNotifications,
+} from './lib/push-notifications';
 import { guessProductCategory } from './lib/product-categories';
 
 const screen = ref('login');
@@ -177,6 +195,9 @@ const shoppingListError = ref('');
 const householdUsers = ref([]);
 const categories = ref([]);
 const draftItems = ref([]);
+const draftReceipt = ref(null);
+const receiptPrompt = ref('');
+const receiptPromptError = ref('');
 const draftSaveIdempotencyKey = ref('');
 const product = ref('');
 const value = ref('');
@@ -187,6 +208,7 @@ const isLoggingIn = ref(false);
 const isRequesting = ref(false);
 const loadingLabel = ref('Entrando na sua casa...');
 const balances = ref([]);
+const accumulatedPurchases = ref(null);
 const disputes = ref([]);
 const contestNotifications = ref([]);
 const disputeError = ref('');
@@ -203,6 +225,9 @@ const monthViewError = ref('');
 const showNotifications = ref(false);
 const notificationItems = ref([]);
 const paymentNotifications = ref([]);
+const pushStatus = ref('unknown');
+const pushError = ref('');
+const pushLoading = ref(false);
 const payLoadingId = ref('');
 const balanceLoadingId = ref('');
 const balanceOffsetKeys = ref({});
@@ -352,15 +377,74 @@ function toApiDate(value) {
   throw new Error('A data da compra é inválida. Revise a data e tente novamente.');
 }
 
+function importedReceiptDate(value) {
+  const formattedDate = formatPurchaseDate(value || formatCalendarDate());
+  const match = formattedDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return formatCalendarDate();
+  const [, dayText, monthText, yearText] = match;
+  const day = Number(dayText);
+  const month = Number(monthText);
+  const year = Number(yearText);
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year &&
+    date.getMonth() === month - 1 &&
+    date.getDate() === day
+    ? formattedDate
+    : formatCalendarDate();
+}
+
 function refreshNotifications() {
   notifications.refresh(loggedUser.value?.id, items.value);
 }
 
 async function openNotifications() {
-  await Promise.all([refreshDisputes(), refreshPendingNotifications()]);
+  if (showNotifications.value) {
+    showNotifications.value = false;
+    return;
+  }
+  await Promise.all([refreshDisputes(), refreshPendingNotifications(), refreshPushStatus()]);
   notificationItems.value = [...notifications.unreadItems.value, ...paymentNotifications.value, ...contestNotifications.value];
   showNotifications.value = true;
   notifications.markAllSeen(loggedUser.value.id, items.value);
+}
+
+async function refreshPushStatus() {
+  pushError.value = '';
+  try {
+    const state = await inspectPushNotifications();
+    pushStatus.value = state.status;
+  } catch (error) {
+    pushStatus.value = 'error';
+    pushError.value = error instanceof Error ? error.message : 'Não foi possível verificar as notificações deste aparelho.';
+  }
+}
+
+async function enableDevicePush() {
+  pushLoading.value = true;
+  pushError.value = '';
+  try {
+    const state = await enablePushNotifications();
+    pushStatus.value = state.status;
+  } catch (error) {
+    pushError.value = error instanceof Error ? error.message : 'Não foi possível ativar as notificações neste aparelho.';
+  } finally {
+    pushLoading.value = false;
+  }
+}
+
+async function disableDevicePush() {
+  pushLoading.value = true;
+  pushError.value = '';
+  try {
+    await disablePushNotifications();
+    pushStatus.value = 'available';
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Não foi possível desativar as notificações neste aparelho.';
+    await refreshPushStatus();
+    pushError.value = message;
+  } finally {
+    pushLoading.value = false;
+  }
 }
 
 async function refreshPendingNotifications() {
@@ -539,6 +623,30 @@ async function applyBootstrap(bootstrap, month) {
   const mappedItems = loadedItems.map(mapApiItem);
   items.value = await categorizeItems(mappedItems);
   balances.value = (bootstrap.balances || []).map(mapApiBalance);
+  const accumulated = bootstrap.accumulatedPurchases;
+  if (accumulated === undefined || accumulated === null) {
+    accumulatedPurchases.value = null;
+  } else {
+    if (
+      typeof accumulated !== 'object' ||
+      !/^\d{4}-(0[1-9]|1[0-2])$/.test(String(accumulated.fromMonth || '')) ||
+      !/^\d{4}-(0[1-9]|1[0-2])$/.test(String(accumulated.toMonth || '')) ||
+      !Number.isSafeInteger(accumulated.amountCents) ||
+      accumulated.amountCents < 0 ||
+      !Array.isArray(accumulated.openMonths) ||
+      accumulated.openMonths.some(
+        (month) => !/^\d{4}-(0[1-9]|1[0-2])$/.test(String(month)),
+      )
+    ) {
+      throw new Error('A API retornou um resumo acumulado de compras inválido.');
+    }
+    accumulatedPurchases.value = {
+      fromMonth: accumulated.fromMonth,
+      toMonth: accumulated.toMonth,
+      amountCents: accumulated.amountCents,
+      openMonths: accumulated.openMonths,
+    };
+  }
 }
 
 async function categorizeItems(mappedItems) {
@@ -618,11 +726,17 @@ async function loadMonthView(month) {
 
 function startQrImport() {
   if (!loggedUser.value) return;
+  draftReceipt.value = null;
+  receiptPrompt.value = '';
+  receiptPromptError.value = '';
   screen.value = 'scanner';
 }
 
 function startOcrImport() {
   if (!loggedUser.value) return;
+  draftReceipt.value = null;
+  receiptPrompt.value = '';
+  receiptPromptError.value = '';
   screen.value = 'ocr';
 }
 
@@ -633,6 +747,9 @@ async function readNf(qrCode) {
   screen.value = 'loading';
   try {
     draftSaveIdempotencyKey.value = '';
+    draftReceipt.value = null;
+    receiptPrompt.value = '';
+    receiptPromptError.value = '';
     const [data, loadedCategories] = await Promise.all([
       postApi('/imports/nfce/qr', { qrCode }, { idempotency: false }),
       fetchCategories(),
@@ -641,14 +758,24 @@ async function readNf(qrCode) {
       throw new Error('Nenhuma categoria foi cadastrada no banco de dados.');
     }
     categories.value = loadedCategories;
+    const receiptUrl = isHttpUrl(data.receiptUrl || data.receiptLink || qrCode)
+      ? String(data.receiptUrl || data.receiptLink || qrCode)
+      : '';
+    const receiptIdentifier = /^\d{44}$/.test(String(data.receiptIdentifier || ''))
+      ? String(data.receiptIdentifier)
+      : '';
+    const receiptGroupId = createIdempotencyKey();
+    const receiptDate = importedReceiptDate(data.date);
     const parsedItems = (data.items || [])
       .map((item, index) => ({
         id: `nf-${Date.now()}-${index}`,
+        receiptGroupId,
         product: String(item.product ?? item.Produto ?? ''),
         value: Number(item.value ?? item.Valor_Total ?? item.valor ?? 0),
         market: data.market || String(item.market ?? item.Mercado ?? 'NFC-e'),
-        date: formatPurchaseDate(data.date || String(item.date ?? item.Data ?? formatCalendarDate())),
-        receiptUrl: isHttpUrl(data.receiptUrl || data.receiptLink || qrCode) ? String(data.receiptUrl || data.receiptLink || qrCode) : '',
+        date: receiptDate,
+        receiptUrl,
+        ...(receiptIdentifier ? { receiptIdentifier } : {}),
         buyerId: loggedUser.value.id,
         sharedWith: [loggedUser.value.id],
         paidWith: [],
@@ -656,6 +783,22 @@ async function readNf(qrCode) {
       .filter((item) => item.product && item.value > 0);
 
     if (!parsedItems.length) throw new Error('A NFC-e não retornou produtos.');
+    draftReceipt.value = {
+      id: receiptGroupId,
+      date: receiptDate,
+      receiptUrl,
+      receiptIdentifier,
+    };
+    if (receiptIdentifier) {
+      try {
+        const alreadyAdded = await checkReceiptAlreadyAdded(receiptIdentifier);
+        receiptPrompt.value = alreadyAdded ? 'duplicate' : '';
+      } catch (error) {
+        receiptPrompt.value = 'unverified';
+        receiptPromptError.value =
+          error instanceof Error ? error.message : 'Não foi possível verificar a nota.';
+      }
+    }
     const productMappings = await fetchProductCategoryMappings(
       parsedItems.map((item) => item.product),
     );
@@ -685,6 +828,9 @@ async function readNfImage({ imageBase64, mimeType }) {
   screen.value = 'loading';
   try {
     draftSaveIdempotencyKey.value = '';
+    draftReceipt.value = null;
+    receiptPrompt.value = '';
+    receiptPromptError.value = '';
     const [data, loadedCategories] = await Promise.all([
       postApi(
         '/imports/receipt/ocr',
@@ -700,14 +846,24 @@ async function readNfImage({ imageBase64, mimeType }) {
       throw new Error('Nenhuma categoria foi cadastrada no banco de dados.');
     }
     categories.value = loadedCategories;
+    const receiptUrl = isHttpUrl(data.receiptUrl || data.receiptLink)
+      ? String(data.receiptUrl || data.receiptLink)
+      : '';
+    const receiptIdentifier = /^\d{44}$/.test(String(data.receiptIdentifier || ''))
+      ? String(data.receiptIdentifier)
+      : '';
+    const receiptGroupId = createIdempotencyKey();
+    const receiptDate = importedReceiptDate(data.date);
     const parsedItems = (data.items || [])
       .map((item, index) => ({
         id: `ocr-${Date.now()}-${index}`,
+        receiptGroupId,
         product: String(item.product ?? item.Produto ?? ''),
         value: Number(item.value ?? item.Valor_Total ?? item.valor ?? 0),
         market: data.market || String(item.market ?? item.Mercado ?? 'Compra por OCR'),
-        date: formatPurchaseDate(data.date || String(item.date ?? item.Data ?? formatCalendarDate())),
-        receiptUrl: isHttpUrl(data.receiptUrl || data.receiptLink) ? String(data.receiptUrl || data.receiptLink) : '',
+        date: receiptDate,
+        receiptUrl,
+        ...(receiptIdentifier ? { receiptIdentifier } : {}),
         buyerId: loggedUser.value.id,
         sharedWith: [loggedUser.value.id],
         paidWith: [],
@@ -715,6 +871,22 @@ async function readNfImage({ imageBase64, mimeType }) {
       .filter((item) => item.product && item.value > 0);
 
     if (!parsedItems.length) throw new Error('O OCR não encontrou produtos. Confira a foto e tente novamente.');
+    draftReceipt.value = {
+      id: receiptGroupId,
+      date: receiptDate,
+      receiptUrl,
+      receiptIdentifier,
+    };
+    if (receiptIdentifier) {
+      try {
+        const alreadyAdded = await checkReceiptAlreadyAdded(receiptIdentifier);
+        receiptPrompt.value = alreadyAdded ? 'duplicate' : '';
+      } catch (error) {
+        receiptPrompt.value = 'unverified';
+        receiptPromptError.value =
+          error instanceof Error ? error.message : 'Não foi possível verificar a nota.';
+      }
+    }
     const productMappings = await fetchProductCategoryMappings(
       parsedItems.map((item) => item.product),
     );
@@ -837,6 +1009,14 @@ function editDraftItem(itemId, changes) {
 
 function removeDraftItem(itemId) {
   draftItems.value = draftItems.value.filter((item) => item.id !== itemId);
+  if (
+    draftReceipt.value &&
+    !draftItems.value.some((item) => item.receiptGroupId === draftReceipt.value.id)
+  ) {
+    draftReceipt.value = null;
+    receiptPrompt.value = '';
+    receiptPromptError.value = '';
+  }
   draftSaveIdempotencyKey.value = '';
 }
 
@@ -846,6 +1026,31 @@ function updateDraftDate(itemId, date) {
     item.id === itemId ? { ...item, date: formatPurchaseDate(date) } : item,
   );
   draftSaveIdempotencyKey.value = '';
+}
+
+function updateReceiptDate(date) {
+  if (!draftReceipt.value || !date) return;
+  const formattedDate = formatPurchaseDate(date);
+  const groupId = draftReceipt.value.id;
+  draftReceipt.value = { ...draftReceipt.value, date: formattedDate };
+  draftItems.value = draftItems.value.map((item) =>
+    item.receiptGroupId === groupId ? { ...item, date: formattedDate } : item,
+  );
+  draftSaveIdempotencyKey.value = '';
+}
+
+function discardReceiptImport() {
+  draftItems.value = [];
+  draftReceipt.value = null;
+  receiptPrompt.value = '';
+  receiptPromptError.value = '';
+  draftSaveIdempotencyKey.value = '';
+  screen.value = 'home';
+}
+
+function continueReceiptImport() {
+  receiptPrompt.value = '';
+  receiptPromptError.value = '';
 }
 
 async function updateDraftCategory(productName, categoryName) {
@@ -946,6 +1151,9 @@ function applyProductCategoryMapping(mapping) {
 
 function startManualItem() {
   draftItems.value = [];
+  draftReceipt.value = null;
+  receiptPrompt.value = '';
+  receiptPromptError.value = '';
   draftSaveIdempotencyKey.value = '';
   category.value = defaultCategoryName.value;
   purchaseDate.value = toInputDate(new Date());
@@ -997,6 +1205,7 @@ async function saveDraft() {
         category: item.category,
         valueCents,
         ...(item.receiptUrl ? { receiptUrl: item.receiptUrl } : {}),
+        ...(item.receiptIdentifier ? { receiptIdentifier: item.receiptIdentifier } : {}),
         participantIds: item.sharedWith.filter((id) => !(item.notConsuming || []).includes(id)),
         paidDirectlyBy: item.paidWith,
         cashContributions: item.cashContributions || [
@@ -1011,6 +1220,9 @@ async function saveDraft() {
     balanceItemsById.value = {};
     await reloadDashboard();
     draftItems.value = [];
+    draftReceipt.value = null;
+    receiptPrompt.value = '';
+    receiptPromptError.value = '';
     draftSaveIdempotencyKey.value = '';
     screen.value = 'home';
     refreshNotifications();
@@ -1170,31 +1382,49 @@ async function addManualItem() {
 }
 
 async function logout() {
-  let logoutError;
-  try {
-    if (getApiToken()) await postApi('/auth/logout', {}, { idempotency: false });
-  } catch (error) {
-    logoutError = error instanceof Error ? error.message : 'Não foi possível encerrar a sessão no servidor.';
-  } finally {
-    clearApiToken();
-    loggedUser.value = null;
-    householdUsers.value = [];
-    items.value = [];
-    monthViewItems.value = [];
-    monthViewLoading.value = false;
-    monthViewError.value = '';
-    monthLoadRequestId += 1;
-    shoppingListItems.value = [];
-    balances.value = [];
-    disputes.value = [];
-    paymentNotifications.value = [];
-    contestNotifications.value = [];
-    balanceItemsById.value = {};
-    balanceOffsetKeys.value = {};
-    showNotifications.value = false;
-    screen.value = 'login';
+  const logoutErrors = [];
+  if (getApiToken()) {
+    try {
+      await disablePushNotifications();
+    } catch (error) {
+      logoutErrors.push(
+        error instanceof Error
+          ? `Não foi possível remover este aparelho das notificações: ${error.message}`
+          : 'Não foi possível remover este aparelho das notificações.',
+      );
+    }
+    try {
+      await postApi('/auth/logout', {}, { idempotency: false });
+    } catch (error) {
+      logoutErrors.push(
+        error instanceof Error ? error.message : 'Não foi possível encerrar a sessão no servidor.',
+      );
+    }
   }
-  if (logoutError) showMessage(`Sessão encerrada neste dispositivo, mas houve um erro ao revogá-la no servidor: ${logoutError}`);
+  clearApiToken();
+  loggedUser.value = null;
+  householdUsers.value = [];
+  items.value = [];
+  accumulatedPurchases.value = null;
+  draftReceipt.value = null;
+  receiptPrompt.value = '';
+  receiptPromptError.value = '';
+  monthViewItems.value = [];
+  monthViewLoading.value = false;
+  monthViewError.value = '';
+  monthLoadRequestId += 1;
+  shoppingListItems.value = [];
+  balances.value = [];
+  disputes.value = [];
+  paymentNotifications.value = [];
+  contestNotifications.value = [];
+  pushStatus.value = 'unknown';
+  pushError.value = '';
+  balanceItemsById.value = {};
+  balanceOffsetKeys.value = {};
+  showNotifications.value = false;
+  screen.value = 'login';
+  if (logoutErrors.length) showMessage(`Sessão encerrada neste dispositivo, mas ocorreram erros: ${logoutErrors.join(' ')}`);
 }
 
 async function reloadDashboard() {

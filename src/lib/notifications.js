@@ -2,12 +2,8 @@ import { computed, ref } from 'vue';
 
 const SEEN_KEY_PREFIX = 'mandamoney_seen_items_';
 
-// Como GitHub Pages não roda um servidor de push, o "alerta de notificação"
-// funciona assim: guardamos no localStorage do navegador quais itens cada
-// usuário já viu. Sempre que a lista de itens é carregada da planilha, itens
-// novos em que a pessoa foi marcada (e que ela não pagou) contam como não
-// lidos, e o sininho acende. Isso não avisa em tempo real como um push, mas
-// não precisa de nenhuma infraestrutura extra.
+// Guardamos no localStorage quais itens cada usuário já viu neste navegador.
+// O envio de notificações push para os aparelhos é feito pela API.
 
 function loadSeenIds(userId) {
   try {
