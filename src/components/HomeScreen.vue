@@ -121,9 +121,31 @@
       </div>
 
       <div class="debt-card">
-        <p v-if="balances.length === 0" class="empty-text">Nenhuma divisão registrada neste mês.</p>
-        <template v-else>
-          <div v-for="balance in balances" :key="balance.id" class="debt-row" :style="isSettled(balance) ? { opacity: 0.55 } : {}">
+        <button
+          v-if="historicalBalances.length"
+          class="debt-history-toggle"
+          type="button"
+          :aria-expanded="showBalanceHistory"
+          @click="showBalanceHistory = !showBalanceHistory"
+        >
+          <span class="debt-history-label">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 12a9 9 0 1 0 2.64-6.36L3 8" />
+              <path d="M3 3v5h5m4-1v5l3 2" />
+            </svg>
+            {{ showBalanceHistory ? 'Ocultar histórico' : 'Histórico' }}
+          </span>
+          <span class="debt-history-count">{{ historicalBalances.length }}</span>
+        </button>
+        <p v-if="activeBalances.length === 0 && !showBalanceHistory" class="empty-text">
+          {{ historicalBalances.length ? 'Nenhuma divisão pendente.' : 'Nenhuma divisão registrada neste mês.' }}
+        </p>
+        <template v-if="displayedBalances.length">
+          <template v-for="(balance, index) in displayedBalances" :key="balance.id">
+            <p v-if="showBalanceHistory && historicalBalances.length && index === activeBalances.length" class="debt-history-heading">
+              Histórico de saldos
+            </p>
+            <div class="debt-row" :style="isSettled(balance) ? { opacity: 0.55 } : {}">
             <button
               class="debt-details-button"
               :aria-expanded="expandedBalanceId === String(balance.id)"
@@ -226,7 +248,8 @@
                 <strong>− {{ money(adjustment.value) }}</strong>
               </div>
             </div>
-          </div>
+            </div>
+          </template>
         </template>
       </div>
 
@@ -329,6 +352,24 @@ const monthName = computed(() => formatMonthName(props.currentDate));
 const monthAbbreviation = computed(() => formatMonthName(props.currentDate, 'short').replace('.', '').toLocaleUpperCase('pt-BR'));
 const expandedBalanceId = ref('');
 const balancePromptId = ref('');
+const showBalanceHistory = ref(false);
+const activeBalances = computed(() => props.balances.filter((balance) => !isSettled(balance)));
+const historicalBalances = computed(() =>
+  props.balances
+    .filter(isSettled)
+    .slice()
+    .sort((left, right) => {
+      const leftPaidAt = Date.parse(left.paidAt || '');
+      const rightPaidAt = Date.parse(right.paidAt || '');
+      const leftDate = Number.isNaN(leftPaidAt) ? 0 : leftPaidAt;
+      const rightDate = Number.isNaN(rightPaidAt) ? 0 : rightPaidAt;
+      return rightDate - leftDate || String(left.id).localeCompare(String(right.id));
+    }),
+);
+const displayedBalances = computed(() => [
+  ...activeBalances.value,
+  ...(showBalanceHistory.value ? historicalBalances.value : []),
+]);
 
 const balanceConfirmation = computed(() => {
   const balance = props.balances.find((item) => String(item.id) === balancePromptId.value);
@@ -417,7 +458,8 @@ function balanceItemsFor(balance) {
   let allocatedCents = 0;
   let offsetCovered = offsetCents > 0;
 
-  return entries.map((entry) => {
+  return entries
+    .map((entry) => {
     const shareCents = Math.round(entry.share * 100);
     const disputedAndRemoved = String(entry.dispute?.status || '').toLowerCase() === 'aceita';
     const coveredByOffset = !disputedAndRemoved && offsetCovered && allocatedCents + shareCents <= offsetCents;
@@ -432,18 +474,33 @@ function balanceItemsFor(balance) {
       ...entry,
       settled: !disputedAndRemoved && (entry.alreadyPaid || settledBalance || coveredByOffset),
     };
-  });
+    })
+    .sort(
+      (left, right) =>
+        Number(left.settled) - Number(right.settled) ||
+        comparePurchaseDatesDescending(left.item.date, right.item.date) ||
+        left.item.id.localeCompare(right.item.id),
+    );
 }
 
 function comparePurchaseDates(left, right) {
-  const timestamp = (value) => {
-    const text = String(value || '').trim();
-    const brazilian = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    const normalized = brazilian ? `${brazilian[3]}-${brazilian[2]}-${brazilian[1]}` : text;
-    const parsed = Date.parse(normalized);
-    return Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed;
-  };
-  return timestamp(left) - timestamp(right);
+  const leftTimestamp = purchaseTimestamp(left);
+  const rightTimestamp = purchaseTimestamp(right);
+  if (leftTimestamp === null) return rightTimestamp === null ? 0 : 1;
+  if (rightTimestamp === null) return -1;
+  return leftTimestamp - rightTimestamp;
+}
+
+function comparePurchaseDatesDescending(left, right) {
+  return comparePurchaseDates(right, left);
+}
+
+function purchaseTimestamp(value) {
+  const text = String(value || '').trim();
+  const brazilian = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  const normalized = brazilian ? `${brazilian[3]}-${brazilian[2]}-${brazilian[1]}` : text;
+  const parsed = Date.parse(normalized);
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 function balanceAdjustmentsFor(balance) {
@@ -492,7 +549,13 @@ function confirmBalance() {
 }
 
 function canContest(balance, entry) {
-  return String(props.user.id) === String(balance.debtorId) && String(balance.status).toLowerCase() === 'pendente' && !entry.dispute;
+  return (
+    String(props.user.id) === String(balance.debtorId) &&
+    String(balance.status).toLowerCase() === 'pendente' &&
+    !entry.settled &&
+    !entry.alreadyPaid &&
+    !entry.dispute
+  );
 }
 
 function disputeStatusText(dispute) {

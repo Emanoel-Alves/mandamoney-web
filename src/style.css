@@ -465,6 +465,28 @@ input {
   margin-bottom: 28px;
 }
 
+.debt-history-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 11px 12px;
+  color: var(--dark);
+  background: #f8faf5;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 800;
+}
+.debt-history-toggle:hover { border-color: #b7c8a9; background: #f1f6e8; }
+.debt-history-toggle:focus-visible { outline: 3px solid rgb(184 219 78 / 55%); outline-offset: 2px; }
+.debt-history-label { display: inline-flex; align-items: center; gap: 8px; }
+.debt-history-label svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.debt-history-count { min-width: 24px; border-radius: 999px; padding: 3px 7px; color: var(--dark); background: var(--chip-bg); font-size: 11px; text-align: center; }
+.debt-history-heading { margin: 15px 0 4px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase; }
+
 .debt-row {
   display: flex;
   flex-wrap: wrap;
