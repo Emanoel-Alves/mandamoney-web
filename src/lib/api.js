@@ -127,7 +127,11 @@ export const requestApi = async (path, options = {}, { authenticated = true } = 
       SERVICE_UNAVAILABLE: 'O serviço está temporariamente indisponível.',
       INTERNAL_ERROR: 'Ocorreu um erro inesperado. Tente novamente.',
     };
-    let message = messages[code] || data.error?.message || 'Não foi possível acessar a API.';
+    const apiMessage = typeof data.error?.message === 'string' ? data.error.message.trim() : '';
+    let message =
+      code === 'INVALID_REQUEST' && apiMessage && apiMessage !== 'Request validation failed.'
+        ? apiMessage
+        : messages[code] || apiMessage || 'Não foi possível acessar a API.';
     if (code === 'UNAUTHORIZED') {
       if (path === '/auth/login') message = 'Telefone ou data de aniversário incorretos.';
       else message = 'Sua sessão expirou. Entre novamente.';
